@@ -7,6 +7,7 @@ repository.workspace = true
 description = "Provides the transaction format and semantics for Midnight."
 
 [features]
+gpu = ["transient-crypto/gpu"]
 default = ["proof-verifying"]
 proving = []
 # marker: if this enabled, your ledger *isn't* a stable build!
@@ -71,6 +72,13 @@ tempfile = "3.20"
 pastey = "0.2.1"
 serde_json = "^1.0.140"
 hex = "^0.4.3"
+# For the ledger-level GPU k-sweep benchmark (tests/gpu_ksweep.rs): drive the exact
+# prover seam (midnight_proofs::create_proof) on synthetic circuits at k=14..19.
+# Both are redirected to the GPU fork via the workspace [patch.crates-io].
+midnight-proofs = "0.7"
+midnight-curves = "0.2"
+blake2b_simd = "1"
+rand_chacha = "0.3"
 
 [[bench]]
 name = "benchmarking"

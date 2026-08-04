@@ -2043,6 +2043,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "halo2curves"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d380afeef3f1d4d3245b76895172018cfb087d9976a7cabcd5597775b2933e07"
+dependencies = [
+ "blake2",
+ "digest 0.10.7",
+ "ff",
+ "group",
+ "halo2derive 0.1.0",
+ "lazy_static",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "pairing",
+ "pasta_curves",
+ "paste",
+ "rand 0.8.6",
+ "rand_core 0.6.4",
+ "rayon",
+ "sha2 0.10.9",
+ "static_assertions",
+ "subtle",
+ "unroll",
+]
+
+[[package]]
+name = "halo2derive"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bdb99e7492b4f5ff469d238db464131b86c2eaac814a78715acba369f64d2c76"
+dependencies = [
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "proc-macro2",
+ "quote 1.0.45",
+ "syn 1.0.109",
+]
+
+[[package]]
 name = "halo2derive"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2300,6 +2341,52 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "icicle-bls12-381"
+version = "4.0.0"
+source = "git+https://github.com/ingonyama-zk/icicle.git?tag=v4.0.0#6c77775961b0e4dc2be359feec1ac11536c18043"
+dependencies = [
+ "cmake",
+ "icicle-core",
+ "icicle-hash",
+ "icicle-runtime",
+ "serde",
+]
+
+[[package]]
+name = "icicle-core"
+version = "4.0.0"
+source = "git+https://github.com/ingonyama-zk/icicle.git?tag=v4.0.0#6c77775961b0e4dc2be359feec1ac11536c18043"
+dependencies = [
+ "cmake",
+ "hex",
+ "icicle-runtime",
+ "once_cell",
+ "rand 0.8.6",
+ "rayon",
+ "serde",
+]
+
+[[package]]
+name = "icicle-hash"
+version = "4.0.0"
+source = "git+https://github.com/ingonyama-zk/icicle.git?tag=v4.0.0#6c77775961b0e4dc2be359feec1ac11536c18043"
+dependencies = [
+ "cmake",
+ "icicle-core",
+ "icicle-runtime",
+ "rand 0.8.6",
+]
+
+[[package]]
+name = "icicle-runtime"
+version = "4.0.0"
+source = "git+https://github.com/ingonyama-zk/icicle.git?tag=v4.0.0#6c77775961b0e4dc2be359feec1ac11536c18043"
+dependencies = [
+ "cmake",
+ "once_cell",
 ]
 
 [[package]]
@@ -2707,6 +2794,9 @@ name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
+dependencies = [
+ "spin 0.9.9",
+]
 
 [[package]]
 name = "leb128fmt"
@@ -2894,6 +2984,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "midnight-bls12-381-cuda"
+version = "0.1.0"
+dependencies = [
+ "ff",
+ "group",
+ "halo2curves",
+ "icicle-bls12-381",
+ "icicle-core",
+ "icicle-runtime",
+ "midnight-curves",
+ "once_cell",
+ "rayon",
+ "static_assertions",
+ "tracing",
+]
+
+[[package]]
 name = "midnight-circuits"
 version = "6.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2937,9 +3044,7 @@ dependencies = [
 
 [[package]]
 name = "midnight-curves"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71df41292a1fd7796bf6c0c6eff7ad717d628406a59a79240e68579716c3566a"
+version = "0.2.1"
 dependencies = [
  "bitvec",
  "blst",
@@ -2948,7 +3053,7 @@ dependencies = [
  "ff",
  "getrandom 0.2.17",
  "group",
- "halo2derive",
+ "halo2derive 0.2.0",
  "hex",
  "lazy_static",
  "num-bigint",
@@ -2967,6 +3072,7 @@ name = "midnight-ledger"
 version = "8.2.0-rc.1"
 dependencies = [
  "anyhow",
+ "blake2b_simd",
  "criterion",
  "derive-where",
  "digest-io",
@@ -2980,10 +3086,12 @@ dependencies = [
  "lazy_static",
  "midnight-base-crypto",
  "midnight-coin-structure",
+ "midnight-curves",
  "midnight-ledger",
  "midnight-ledger-static",
  "midnight-onchain-runtime",
  "midnight-onchain-vm",
+ "midnight-proofs",
  "midnight-serialize",
  "midnight-storage",
  "midnight-storage-core",
@@ -2995,6 +3103,7 @@ dependencies = [
  "proptest",
  "proptest-derive",
  "rand 0.8.6",
+ "rand_chacha 0.3.1",
  "rayon",
  "reqwest",
  "serde",
@@ -3183,21 +3292,23 @@ dependencies = [
 
 [[package]]
 name = "midnight-proofs"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b48f199fa4707df5dc443238cd260344f2ad369897fbdc559dacce19b43d2119"
+version = "0.7.3"
 dependencies = [
  "blake2b_simd",
  "ff",
  "getrandom 0.2.17",
  "group",
+ "icicle-runtime",
+ "midnight-bls12-381-cuda",
  "midnight-curves",
  "num-bigint",
+ "once_cell",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
  "serde",
  "serde_derive",
+ "static_assertions",
  "tracing",
 ]
 
@@ -3881,6 +3992,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "pasta_curves"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3437083215c505e867eea5478371feba43d7689d6d15ec0a209eb46fb0d4cda6"
+dependencies = [
+ "blake2b_simd",
+ "ff",
+ "group",
+ "lazy_static",
+ "rand 0.8.6",
+ "static_assertions",
+ "subtle",
+]
+
+[[package]]
 name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4058,7 +4184,7 @@ dependencies = [
  "nix 0.26.4",
  "once_cell",
  "smallvec",
- "spin",
+ "spin 0.10.0",
  "symbolic-demangle",
  "tempfile",
  "thiserror 2.0.18",
@@ -5130,6 +5256,12 @@ dependencies = [
 
 [[package]]
 name = "spin"
+version = "0.9.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
+
+[[package]]
+name = "spin"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
@@ -5710,6 +5842,16 @@ name = "unit-prefix"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81e544489bf3d8ef66c953931f56617f423cd4b5494be343d9b9d3dda037b9a3"
+
+[[package]]
+name = "unroll"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ad948c1cb799b1a70f836077721a92a35ac177d4daddf4c20a633786d4cf618"
+dependencies = [
+ "quote 1.0.45",
+ "syn 1.0.109",
+]
 
 [[package]]
 name = "untrusted"
