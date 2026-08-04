@@ -7,6 +7,7 @@ repository.workspace = true
 description = "Cryptographic primitives for Midnight that may change over time."
 
 [features]
+gpu = ["midnight-proofs/gpu"]
 default = []
 cli = ["base-crypto/cli"]
 proptest = [
