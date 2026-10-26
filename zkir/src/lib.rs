@@ -38,10 +38,13 @@ pub fn init_gpu_backend() -> Option<std::time::Duration> {
     let warmup = midnight_proofs_v1::init_gpu_backend();
     #[cfg(not(feature = "gpu-v1"))]
     let warmup = None;
-    // midnight-proofs 0.8.x: the current (IR V2+, zkir-v3) pipeline, once the
-    // 0.8.x GPU fork exists:
-    // #[cfg(feature = "gpu-v2")]
-    // let warmup = midnight_proofs::init_gpu_backend().or(warmup);
+    // midnight-proofs 0.8.x: the current (IR V2+, zkir-v3) pipeline. A separate
+    // backend instance, so it is warmed separately.
+    #[cfg(feature = "gpu-v2")]
+    let warmup = match (warmup, midnight_proofs::init_gpu_backend()) {
+        (Some(a), Some(b)) => Some(a + b),
+        (a, b) => a.or(b),
+    };
     warmup
 }
 

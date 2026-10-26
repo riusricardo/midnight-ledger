@@ -3116,6 +3116,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "midnight-bls12-381-cuda"
+version = "0.2.0"
+dependencies = [
+ "ff",
+ "group",
+ "halo2curves",
+ "icicle-bls12-381",
+ "icicle-core",
+ "icicle-runtime",
+ "midnight-curves 0.3.1",
+ "once_cell",
+ "rayon",
+ "static_assertions",
+ "tracing",
+]
+
+[[package]]
 name = "midnight-circuits"
 version = "6.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3474,7 +3491,7 @@ dependencies = [
  "getrandom 0.2.17",
  "group",
  "icicle-runtime",
- "midnight-bls12-381-cuda",
+ "midnight-bls12-381-cuda 0.1.0",
  "midnight-curves 0.2.1",
  "num-bigint",
  "once_cell",
@@ -3495,14 +3512,18 @@ dependencies = [
  "ff",
  "getrandom 0.2.17",
  "group",
+ "icicle-runtime",
  "itertools 0.14.0",
+ "midnight-bls12-381-cuda 0.2.0",
  "midnight-curves 0.3.1",
  "num-bigint",
+ "once_cell",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
  "serde",
  "serde_derive",
+ "static_assertions",
  "tracing",
 ]
 

@@ -21,6 +21,8 @@ fixed-point-custom-serde = ["base-crypto/fixed-point-custom-serde"]
 # `ProvingProvider`); the prover lives in zkir, whose `gpu` covers both zk
 # stacks. Pulls zkir in so `--features gpu` is never a silent no-op.
 gpu = ["dep:zkir_v2", "zkir_v2/gpu"]
+# Also GPU-accelerate the 0.8.x pipeline (IR V2+, zkir-v3); see zkir's `gpu-v2`.
+gpu-v2 = ["gpu", "zkir_v2/gpu-v2", "transient-crypto/gpu"]
 
 [dependencies]
 coin-structure = { version = "3.0.0", path = "../coin-structure", package = "midnight-coin-structure" }

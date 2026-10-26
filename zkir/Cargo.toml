@@ -20,14 +20,16 @@ mock-verify = ["transient-crypto-old/mock-verify", "transient-crypto/mock-verify
 # node, so enabling a line here GPU-accelerates every user of that line in the
 # build (transient-crypto-old, zk-stdlib, the external zkir-v3, ...).
 #   gpu-v1: midnight-proofs 0.7.x -- IR V0/V1 (legacy) pipeline: the built-in
-#           Zswap spend/output/sign and Dust spend circuits.
-#   gpu-v2: midnight-proofs 0.8.x -- IR V2+ and zkir-v3: Compact contract
-#           circuits. Enable (and add to `gpu`) once the 0.8.x GPU fork with a
-#           `gpu` feature is patched in; declaring it against a midnight-proofs
-#           without that feature fails workspace resolution.
+#           Zswap spend/output/sign and Dust spend circuits, and contracts in
+#           compactc's default zkir 2.0 form.
+#   gpu-v2: midnight-proofs 0.8.x -- IR V2+ (zkir 2.2) and zkir-v3 circuits.
+#           Opt-in, not part of `gpu`: it links a second instance of the CUDA
+#           backend crate (its own MSM context, NTT twiddle domain and device
+#           SRS cache), so a process proving on both lines pays the GPU set-up
+#           memory twice.
 gpu = ["gpu-v1"]
 gpu-v1 = ["midnight-proofs-v1/gpu"]
-# gpu-v2 = ["transient-crypto/gpu"]
+gpu-v2 = ["midnight-proofs/gpu", "transient-crypto/gpu"]
 proptest = [
   "dep:pastey",
   "dep:proptest",
