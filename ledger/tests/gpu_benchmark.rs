@@ -2,10 +2,11 @@
 // Copyright (C) Midnight Foundation
 // SPDX-License-Identifier: Apache-2.0
 //
-// Parity-comparable GPU proving benchmark on a REAL Ledger-9 (ledger-9.1.0.0-rc.6)
-// Zswap+Dust transaction. See midnight-bls12-381-cuda/openspec/changes/parity-comparable-benchmark.
+// GPU proving benchmark on a REAL Ledger-9 (ledger-9.1.0.0-rc.6) Zswap+Dust
+// transaction, shaped like the Parity (closed-CUDA) reference run. See
+// midnight-bls12-381-cuda/openspec/changes/parity-comparable-benchmark.
 //
-// The transaction is the same shape as the reference (Parity closed-CUDA) fixture:
+// The transaction is the same shape as the reference fixture:
 //   2 zswap spends + 2 zswap outputs + 1 dust spend = 5 proof jobs.
 //
 // Which prover runs: on Ledger 9 all five built-in circuits ship as legacy
@@ -15,45 +16,101 @@
 // means the 0.7.x fork (zkir feature `gpu-v1`). The test prints the observed key
 // locations, IR versions and k values after proving, so this is checked per run.
 //
-// Backend selection is entirely via environment (the timed region only proves; the
-// backend is whatever the process is configured for):
+// Seeds and timing follow the reference: the warmup proves seed BENCH_SEED-1
+// (24301), timed iteration i proves seed BENCH_SEED+i (24302, 24303, ...). Every
+// seed gets its own funded TestState (key generation, Dust, two shielded coins),
+// built outside the timers. Two numbers are reported per iteration:
+//   parity  construct the unbalanced tx from the funded state + balance_tx +
+//           Transaction::prove + proof verification + seal + tagged serialization
+//   prove   Transaction::prove alone (the five proof jobs)
+// In `gpu` builds zkir self-verifies every V0 proof inside Transaction::prove (as
+// Ledger 8 and the reference do), so verification is part of both numbers. Builds
+// without `gpu` keep upstream Ledger 9's unverified V0 path, so there the ledger's
+// well-formedness check is timed in its place to keep the parity region the same
+// shape; use one `gpu` build for both arms so they measure the same work. Every
+// sealed tx also passes the ledger's well-formedness check after the timers (proofs
+// against the built-in verifier keys, binding, signatures, limits); failure panics.
+// The one check skipped is fee balancing: TestState::balance_tx pays the fee it
+// estimates for the unproven, unsealed tx, which falls short of the sealed tx's fee
+// (by about 0.24% here, mostly the cost of checking the seal's binding), so the
+// harness reports each tx's Dust balance after its fee instead.
+//
+// Params and keys: the data provider keeps nothing in memory, so every job re-reads
+// and SHA-256s its prover/verifier/IR files (as the proof server does); the prover
+// key is then deserialized from transient-crypto-old's PK_CACHE once warm. SRS
+// params are memoized per k, as a long-running proof server would hold them, so
+// the warmup really warms them: the 0.8.x params are read, hashed and parsed once
+// per k, and `gpu` builds of zkir also reuse one converted 0.7.x instance per k,
+// with its uploaded GPU bases. BENCH_PARAMS_CACHE=0 reloads them for every job.
+//
+// Byte-exactness (BENCH_DUMP / BENCH_EXPECT): everything this harness controls is
+// seeded, yet proofs are not reproducible with upstream midnight-proofs 0.7.3: its
+// lookup argument (`permute_expression_pair`, src/plonk/lookup/prover.rs:399 and
+// :430 upstream, :455 and :485 in the GPU fork) fills the permuted table's repeated
+// rows by iterating a std `HashMap`, whose order is random per map instance. Two
+// proves of one seed therefore differ, on CPU as on GPU; with that map made a
+// BTreeMap, this benchmark's proofs are byte-identical across processes. So a run
+// with BENCH_DUMP or BENCH_EXPECT first proves the warmup seed twice to learn
+// whether its prover is deterministic, and BENCH_EXPECT then requires:
+//   - both runs deterministic: every sealed tx identical, byte for byte;
+//   - otherwise: every sealed tx identical with its proofs erased, and the same
+//     proofs (circuit, length) in the same order; the proof bytes themselves are
+//     covered by verification, and each proof's first differing byte is reported.
+//
+// Backend selection is via environment:
 //   MIDNIGHT_DEVICE = cpu | gpu | (unset => Auto thresholds)
-//   ICICLE_BACKEND_INSTALL_DIR = dir with our compiled CUDA .so (for the gpu arm)
-//   MIDNIGHT_GPU_STRICT = 1  => the CUDA arm PANICS on any silent CPU fallback,
-//                               so a green run under strict IS the no-fallback proof.
+//     gpu and Auto need a `--features gpu` build: the test initializes the backend
+//     before the warmup and panics unless the 0.7.x line came up.
+//   ICICLE_BACKEND_INSTALL_DIR = dir with our compiled CUDA .so (gpu/Auto)
+//   MIDNIGHT_GPU_STRICT = 1  => panic on any GPU->CPU failure fallback.
 // Tunables:
-//   BENCH_SEED   (default 24302)  the deterministic fixture+prove seed
-//   BENCH_REPEAT (default 5)      timed iterations
-//   BENCH_WARMUP (default 1)      untimed warmups (warm SRS params + PK_CACHE)
-//   BENCH_DUMP   (optional path)  write the serialized proof bytes here (byte-exact diff)
+//   BENCH_SEED         (default 24302)  first timed seed; the warmup uses BENCH_SEED-1
+//   BENCH_REPEAT       (default 5)      timed iterations
+//   BENCH_WARMUP       (default 1)      untimed warmup proves (seeds BENCH_SEED-1, -2, ...)
+//   BENCH_PARAMS_CACHE (default 1)      0 => reload SRS params for every proof job
+//   BENCH_DUMP         (optional path)  write every timed tx and its proofs here
+//   BENCH_EXPECT       (optional path)  compare with another run's BENCH_DUMP; panics
+//                                       on mismatch (see Byte-exactness)
 //
 // Key material: zswap/10/{spend,output}.{prover,verifier,bzkir}, dust/10/spend.* and
 // bls_midnight_2p{k} are resolved by the data provider from $MIDNIGHT_PP (else
 // $XDG_CACHE_HOME/midnight/zk-params, else ~/.cache/midnight/zk-params) and fetched
 // from $MIDNIGHT_PARAM_SOURCE (default https://srs.midnight.network/) when missing.
 //
-// Run one arm:
-//   MIDNIGHT_LEDGER_TEST_STATIC_DIR="" MIDNIGHT_DEVICE=cpu \
-//     cargo test --release -p midnight-ledger-v9 --features proving,test-utilities \
+// Run both arms from one `gpu` build (two processes: the backend config is frozen per
+// process), CPU first, then the GPU arm against the CPU dump:
+//   export MIDNIGHT_LEDGER_TEST_STATIC_DIR="" MIDNIGHT_GPU_STRICT=1 \
+//     ICICLE_BACKEND_INSTALL_DIR=~/.local/icicle-backends/ours
+//   MIDNIGHT_DEVICE=cpu BENCH_DUMP=/tmp/cpu.bin \
+//     cargo test --release -p midnight-ledger-v9 --features proving,test-utilities,gpu \
 //     --test gpu_benchmark -- --nocapture --exact real_tx_prove_bench
+//   MIDNIGHT_DEVICE=gpu BENCH_EXPECT=/tmp/cpu.bin \
+//     cargo test --release -p midnight-ledger-v9 --features proving,test-utilities,gpu \
+//     --test gpu_benchmark -- --nocapture --exact real_tx_prove_bench
+// (Running the test binary directly also needs
+//  LD_LIBRARY_PATH=$PWD/target/release/deps/icicle/lib.)
 //
 #![cfg(all(feature = "proving", feature = "test-utilities"))]
 
 use base_crypto::rng::SplittableRng;
 use coin_structure::coin::{Info as CoinInfo, ShieldedTokenType};
 use midnight_ledger::prove::Resolver;
-use midnight_ledger::structure::Transaction;
+use midnight_ledger::structure::{ProofMarker, Transaction};
 use midnight_ledger::test_utilities::{TestState, test_resolver};
+use midnight_ledger::verify::WellFormedStrictness;
 use midnight_ledger_v9 as midnight_ledger;
 use onchain_runtime::cost_model::INITIAL_COST_MODEL;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use storage::db::InMemoryDB;
 use storage::storage::HashMap;
-use transient_crypto::proofs::{ProofPreimage, ProvingProvider, Resolver as ResolverT};
+use transient_crypto::commitment::PureGeneratorPedersen;
+use transient_crypto::proofs::{
+    ParamsProver, ParamsProverProvider, ProofPreimage, ProvingProvider, Resolver as ResolverT,
+};
 use zkir_v2::{IrMinorVersion, IrSource, LocalProvingProvider};
 use zswap::{Delta, Offer as ZswapOffer, Output as ZswapOutput};
 
@@ -63,7 +120,16 @@ lazy_static! {
     // test_name = "" -> the file-closure resolves contract keys under {DIR}//keys/...
     // (none needed here); the pure zswap+dust keys come from the data-provider cache.
     static ref RESOLVER: Resolver = test_resolver("");
+    static ref PARAMS: MemoParams = MemoParams {
+        enabled: env_u64("BENCH_PARAMS_CACHE", 1) != 0,
+        by_k: Mutex::new(BTreeMap::new()),
+    };
 }
+
+/// In `gpu` builds zkir verifies every V0 proof inside `Transaction::prove`.
+const PROVER_SELF_VERIFIES: bool = cfg!(feature = "gpu");
+
+type SealedTx = Transaction<(), ProofMarker, PureGeneratorPedersen, InMemoryDB>;
 
 fn env_u64(key: &str, default: u64) -> u64 {
     std::env::var(key)
@@ -72,13 +138,47 @@ fn env_u64(key: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
+fn ms_since(t0: Instant) -> f64 {
+    t0.elapsed().as_secs_f64() * 1e3
+}
+
+/// `RESOLVER`'s SRS params, memoized per k (unless BENCH_PARAMS_CACHE=0).
+struct MemoParams {
+    enabled: bool,
+    by_k: Mutex<BTreeMap<u8, ParamsProver>>,
+}
+
+impl ParamsProverProvider for MemoParams {
+    async fn get_params(&self, k: u8) -> std::io::Result<ParamsProver> {
+        if !self.enabled {
+            return RESOLVER.get_params(k).await;
+        }
+        if let Some(params) = self.by_k.lock().expect("params cache poisoned").get(&k) {
+            return Ok(params.clone());
+        }
+        let params = RESOLVER.get_params(k).await?;
+        let mut by_k = self.by_k.lock().expect("params cache poisoned");
+        Ok(by_k.entry(k).or_insert(params).clone())
+    }
+}
+
+/// One proof job, as seen by [`Recording`].
+struct Job {
+    key: String,
+    ms: f64,
+    /// The serialized statement; sorting on it gives the jobs of a seed a stable
+    /// order whatever order they finished in.
+    statement: Vec<u8>,
+    proof: Vec<u8>,
+}
+
 /// Transparent `ProvingProvider` wrapper that records, per proof job, the key
-/// location and the wall time spent inside the inner provider's `prove`.
+/// location, the wall time spent inside the inner provider's `prove` and the proof.
 /// (Jobs are driven by `join_all` on one task and each proof is synchronous
 /// CPU/GPU work, so per-job times are effectively sequential and sum to ~total.)
 struct Recording<P> {
     inner: P,
-    jobs: Arc<Mutex<Vec<(String, f64)>>>,
+    jobs: Arc<Mutex<Vec<Job>>>,
 }
 
 impl<P: ProvingProvider> ProvingProvider for Recording<P> {
@@ -93,11 +193,20 @@ impl<P: ProvingProvider> ProvingProvider for Recording<P> {
     ) -> Result<transient_crypto::proofs::Proof, anyhow::Error> {
         let t0 = Instant::now();
         let res = self.inner.prove(preimage, overwrite_binding_input).await;
-        let ms = t0.elapsed().as_secs_f64() * 1e3;
-        self.jobs
-            .lock()
-            .expect("job log poisoned")
-            .push((preimage.key_location.0.to_string(), ms));
+        let ms = ms_since(t0);
+        if let Ok(proof) = &res {
+            let mut statement = Vec::new();
+            serialize::tagged_serialize(preimage, &mut statement).expect("serialize preimage");
+            if let Some(binding_input) = overwrite_binding_input {
+                statement.extend(binding_input.as_le_bytes());
+            }
+            self.jobs.lock().expect("job log poisoned").push(Job {
+                key: preimage.key_location.0.to_string(),
+                ms,
+                statement,
+                proof: proof.0.clone(),
+            });
+        }
         res
     }
 
@@ -113,37 +222,78 @@ impl<P: ProvingProvider> ProvingProvider for Recording<P> {
     }
 }
 
-/// Build the real 5-job transaction, UNTIMED, fully deterministic from `seed`.
-/// Returns the balanced-but-unproven tx plus the rng to prove it with, so the
-/// proving randomness is identical across iterations and across CPU/GPU arms.
-async fn build_fixture(
-    seed: u64,
-) -> (
-    Transaction<
-        (),
-        midnight_ledger::structure::ProofPreimageMarker,
-        transient_crypto::commitment::PedersenRandomness,
-        InMemoryDB,
-    >,
-    StdRng,
-) {
+/// Shielded value of each coin: two are seeded so balance_tx spends exactly 2 inputs.
+const V: u128 = 5_000_000_000;
+
+/// UNTIMED: the funded state for `seed` (keys, 1 night utxo generating Dust, two
+/// spendable shielded coins of value V), and the rng to build the tx with.
+async fn funded_state(seed: u64) -> (TestState<InMemoryDB>, StdRng) {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut state: TestState<InMemoryDB> = TestState::new(&mut rng);
-
-    // Shielded value V, seeded as two coins so balance_tx spends exactly 2 inputs.
-    const V: u128 = 5_000_000_000;
     let token: ShieldedTokenType = Default::default();
-
     // Dust to pay fees (1 night utxo => 1 dust spend job after balancing).
     state.give_fee_token(&mut rng, 1).await;
-    // Two spendable shielded coins of value V.
     state.rewards_shielded(&mut rng, token, V);
     state.rewards_shielded(&mut rng, token, V);
+    (state, rng)
+}
 
+/// The ledger's own acceptance check; panics unless `tx` is well-formed against
+/// `state`: zswap and dust proofs verified with the built-in verifier keys, the
+/// binding, signatures and limits. Everything but the fee balance, which
+/// `TestState::balance_tx` sizes from its estimate for the unproven, unsealed tx;
+/// the sealed tx costs a little more (see [`dust_fee_balance`]).
+fn assert_well_formed(state: &TestState<InMemoryDB>, tx: &SealedTx, seed: u64) {
+    let mut strictness = WellFormedStrictness::default();
+    strictness.enforce_balancing = false;
+    if let Err(e) = tx.well_formed(&state.ledger, strictness, state.time) {
+        panic!("seed {seed}: the sealed transaction is not well-formed: {e}");
+    }
+}
+
+/// The sealed tx's Dust balance after its own fee: what it pays minus what it
+/// costs, in specks (negative when underpaid), and the fee.
+fn dust_fee_balance(state: &TestState<InMemoryDB>, tx: &SealedTx) -> (i128, u128) {
+    let fee = tx
+        .fees(&state.ledger.parameters, false)
+        .expect("fee calculation");
+    let balance = tx.balance(Some(fee)).expect("balance");
+    (
+        balance
+            .get(&(midnight_ledger::structure::FEE_TOKEN, 0))
+            .copied()
+            .unwrap_or(0),
+        fee,
+    )
+}
+
+/// One proven transaction and its timings.
+struct Proven {
+    seed: u64,
+    parity_ms: f64,
+    prove_ms: f64,
+    /// The tagged serialization of the sealed tx.
+    tx: Vec<u8>,
+    /// The same with every proof erased.
+    erased: Vec<u8>,
+    /// Ordered by (circuit, statement).
+    jobs: Vec<Job>,
+    /// [`dust_fee_balance`] of the sealed tx.
+    fee_balance: (i128, u128),
+}
+
+/// Builds, balances, proves, verifies, seals and serializes the 5-job tx for
+/// `seed`, timing it as described in the header.
+async fn prove_tx(seed: u64) -> Proven {
+    let (mut state, mut rng) = funded_state(seed).await;
+    let jobs = Arc::new(Mutex::new(Vec::new()));
+
+    let t_parity = Instant::now();
     // A guaranteed (segment 0) shielded offer with 2 self-outputs of V each and a
     // delta of -2V. balance_tx then spends the 2 seeded coins (2 inputs, no change
     // output since they sum to exactly 2V) and adds 1 dust spend
     // => 2 spend + 2 output + 1 dust = 5 jobs.
+    let token: ShieldedTokenType = Default::default();
     let mk_output = |rng: &mut StdRng| {
         let coin = CoinInfo {
             nonce: rng.r#gen(),
@@ -161,7 +311,6 @@ async fn build_fixture(
     };
     let out0 = mk_output(&mut rng);
     let out1 = mk_output(&mut rng);
-
     let offer = ZswapOffer {
         inputs: vec![].into(),
         outputs: vec![out0, out1].into(),
@@ -172,20 +321,57 @@ async fn build_fixture(
         }]
         .into(),
     };
-
     let tx = Transaction::<(), _, _, InMemoryDB>::new(
         "local-test",
         HashMap::new(),
         Some(offer),
         HashMap::new(),
     );
-
     let balanced = state
         .balance_tx(rng.split(), tx, &RESOLVER)
         .await
         .expect("balance_tx must succeed");
 
-    (balanced, rng)
+    let provider = Recording {
+        inner: LocalProvingProvider {
+            rng: rng.split(),
+            params: &*PARAMS,
+            resolver: &*RESOLVER,
+        },
+        jobs: jobs.clone(),
+    };
+    let t_prove = Instant::now();
+    let proven = balanced
+        .prove(provider, &INITIAL_COST_MODEL)
+        .await
+        .expect("prove failed");
+    let prove_ms = ms_since(t_prove);
+
+    let sealed: SealedTx = proven.seal(rng.split());
+    if !PROVER_SELF_VERIFIES {
+        assert_well_formed(&state, &sealed, seed);
+    }
+    let mut tx_bytes = Vec::new();
+    serialize::tagged_serialize(&sealed, &mut tx_bytes).expect("serialize tx");
+    let parity_ms = ms_since(t_parity);
+
+    if PROVER_SELF_VERIFIES {
+        assert_well_formed(&state, &sealed, seed);
+    }
+    let fee_balance = dust_fee_balance(&state, &sealed);
+    let mut erased = Vec::new();
+    serialize::tagged_serialize(&sealed.erase_proofs(), &mut erased).expect("serialize tx");
+    let mut jobs = std::mem::take(&mut *jobs.lock().expect("job log poisoned"));
+    jobs.sort_by(|a, b| (&a.key, &a.statement).cmp(&(&b.key, &b.statement)));
+    Proven {
+        seed,
+        parity_ms,
+        prove_ms,
+        tx: tx_bytes,
+        erased,
+        jobs,
+        fee_balance,
+    }
 }
 
 fn median(mut xs: Vec<f64>) -> f64 {
@@ -198,6 +384,10 @@ fn median(mut xs: Vec<f64>) -> f64 {
     } else {
         (xs[n / 2 - 1] + xs[n / 2]) / 2.0
     }
+}
+
+fn mean(xs: &[f64]) -> f64 {
+    xs.iter().sum::<f64>() / xs.len().max(1) as f64
 }
 
 /// UNTIMED: for each key location that was proven, resolve the exact artifacts the
@@ -228,89 +418,280 @@ async fn report_circuits(keys: impl IntoIterator<Item = String>) {
     }
 }
 
+// ---- BENCH_DUMP / BENCH_EXPECT file: a magic, whether the writing run's prover was
+// deterministic, then per timed iteration its seed, sealed tx, proof-erased tx and
+// (circuit, proof) pairs. Integers are u64 LE; byte strings are length-prefixed. ----
+
+const DUMP_MAGIC: &[u8] = b"midnight-ledger-v9 gpu_benchmark dump v1\n";
+
+fn put_u64(out: &mut Vec<u8>, x: u64) {
+    out.extend(x.to_le_bytes());
+}
+
+fn put_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
+    put_u64(out, bytes.len() as u64);
+    out.extend(bytes);
+}
+
+fn take<'a>(input: &mut &'a [u8], n: usize) -> &'a [u8] {
+    assert!(input.len() >= n, "BENCH_EXPECT: truncated dump file");
+    let (head, rest) = input.split_at(n);
+    *input = rest;
+    head
+}
+
+fn take_u64(input: &mut &[u8]) -> u64 {
+    u64::from_le_bytes(take(input, 8).try_into().expect("8 bytes"))
+}
+
+fn take_bytes(input: &mut &[u8]) -> Vec<u8> {
+    let n = take_u64(input) as usize;
+    take(input, n).to_vec()
+}
+
+/// One timed iteration as recorded in a dump.
+struct Recorded {
+    seed: u64,
+    tx: Vec<u8>,
+    erased: Vec<u8>,
+    proofs: Vec<(String, Vec<u8>)>,
+}
+
+fn write_dump(path: &str, deterministic: bool, runs: &[Proven]) {
+    let mut out = DUMP_MAGIC.to_vec();
+    put_u64(&mut out, deterministic as u64);
+    put_u64(&mut out, runs.len() as u64);
+    for run in runs {
+        put_u64(&mut out, run.seed);
+        put_bytes(&mut out, &run.tx);
+        put_bytes(&mut out, &run.erased);
+        put_u64(&mut out, run.jobs.len() as u64);
+        for job in &run.jobs {
+            put_bytes(&mut out, job.key.as_bytes());
+            put_bytes(&mut out, &job.proof);
+        }
+    }
+    std::fs::write(path, &out).expect("write BENCH_DUMP");
+    eprintln!(
+        "   wrote {} timed transactions ({} bytes) -> {path}",
+        runs.len(),
+        out.len()
+    );
+}
+
+fn read_dump(path: &str) -> (bool, Vec<Recorded>) {
+    let data = std::fs::read(path).expect("read BENCH_EXPECT");
+    let mut input = &data[..];
+    assert!(
+        take(&mut input, DUMP_MAGIC.len()) == DUMP_MAGIC,
+        "BENCH_EXPECT {path} is not a gpu_benchmark dump"
+    );
+    let deterministic = take_u64(&mut input) != 0;
+    let n = take_u64(&mut input);
+    let runs = (0..n)
+        .map(|_| {
+            let seed = take_u64(&mut input);
+            let tx = take_bytes(&mut input);
+            let erased = take_bytes(&mut input);
+            let proofs = (0..take_u64(&mut input))
+                .map(|_| {
+                    let key = String::from_utf8(take_bytes(&mut input)).expect("utf-8 key");
+                    (key, take_bytes(&mut input))
+                })
+                .collect();
+            Recorded {
+                seed,
+                tx,
+                erased,
+                proofs,
+            }
+        })
+        .collect();
+    assert!(input.is_empty(), "BENCH_EXPECT {path}: trailing bytes");
+    (deterministic, runs)
+}
+
+fn first_difference(a: &[u8], b: &[u8]) -> Option<usize> {
+    a.iter().zip(b).position(|(x, y)| x != y)
+}
+
+/// Compares this run against another run's dump; panics on any mismatch the two
+/// runs' provers do not explain (see the header).
+fn check_expected(path: &str, deterministic: bool, runs: &[Proven]) {
+    let (expected_deterministic, expected) = read_dump(path);
+    let exact_required = deterministic && expected_deterministic;
+    assert_eq!(
+        expected.len(),
+        runs.len(),
+        "BENCH_EXPECT {path}: it holds {} timed iterations, this run made {}",
+        expected.len(),
+        runs.len()
+    );
+    let mut exact = 0;
+    for (want, got) in expected.iter().zip(runs) {
+        let seed = got.seed;
+        assert_eq!(want.seed, seed, "BENCH_EXPECT {path}: seed mismatch");
+        if want.tx == got.tx {
+            exact += 1;
+            eprintln!(
+                "  [expect] seed {seed}: BYTE-EXACT ({} bytes)",
+                got.tx.len()
+            );
+            continue;
+        }
+        assert!(
+            !exact_required,
+            "seed {seed}: the sealed tx differs from {path} (first difference at byte {:?}) \
+             although both provers are deterministic",
+            first_difference(&want.tx, &got.tx)
+        );
+        assert!(
+            want.erased == got.erased,
+            "seed {seed}: the tx with proofs erased differs from {path} (first difference at \
+             byte {:?}): the two runs did not build, balance and seal the same transaction",
+            first_difference(&want.erased, &got.erased)
+        );
+        let want_shape: Vec<_> = want.proofs.iter().map(|(k, p)| (k, p.len())).collect();
+        let got_shape: Vec<_> = got.jobs.iter().map(|j| (&j.key, j.proof.len())).collect();
+        assert_eq!(
+            want_shape, got_shape,
+            "seed {seed}: the proofs (circuit, length) differ from {path}"
+        );
+        let diverge = want
+            .proofs
+            .iter()
+            .zip(&got.jobs)
+            .map(
+                |((key, proof), job)| match first_difference(proof, &job.proof) {
+                    Some(at) => format!("{key}@{at}/{}", proof.len()),
+                    None => format!("{key}=equal"),
+                },
+            )
+            .collect::<Vec<_>>();
+        eprintln!(
+            "  [expect] seed {seed}: identical with proofs erased; proof bytes first differ at \
+             {}",
+            diverge.join(" ")
+        );
+    }
+    eprintln!(
+        "== EXPECT {path}: {exact}/{} BYTE-EXACT; deterministic prover: this run \
+         {deterministic}, expected run {expected_deterministic} ==",
+        runs.len()
+    );
+    if exact < runs.len() {
+        eprintln!(
+            "   the others are identical except for proof bytes, which a non-deterministic \
+             prover does not reproduce; every proof passed verification"
+        );
+    }
+}
+
 #[tokio::test]
 async fn real_tx_prove_bench() {
     let seed = env_u64("BENCH_SEED", 24302);
     let repeat = env_u64("BENCH_REPEAT", 5) as usize;
-    let warmup = env_u64("BENCH_WARMUP", 1) as usize;
+    let warmup = env_u64("BENCH_WARMUP", 1);
     let device = std::env::var("MIDNIGHT_DEVICE").unwrap_or_else(|_| "auto".into());
     let strict = std::env::var("MIDNIGHT_GPU_STRICT").unwrap_or_else(|_| "0".into());
+    let dump = std::env::var("BENCH_DUMP").ok();
+    let expect = std::env::var("BENCH_EXPECT").ok();
 
     eprintln!(
-        "== real_tx_prove_bench :: device={device} strict={strict} seed={seed} \
-         repeat={repeat} warmup={warmup} =="
+        "== real_tx_prove_bench :: device={device} strict={strict} seeds={seed}..={} \
+         warmup={warmup} params_cache={} prover_self_verifies={PROVER_SELF_VERIFIES} ==",
+        seed + repeat as u64 - 1,
+        PARAMS.enabled,
+    );
+    assert!(
+        cfg!(feature = "proof-verifying"),
+        "the well-formedness check needs the default `proof-verifying` feature"
     );
 
-    // ---- warmup (UNTIMED): warms SRS params I/O + SHA256 + parse, and PK_CACHE ----
-    for _ in 0..warmup {
-        let (balanced, mut prng) = build_fixture(seed).await;
-        let provider = LocalProvingProvider {
-            rng: prng.split(),
-            params: &*RESOLVER,
-            resolver: &*RESOLVER,
-        };
-        let _ = balanced
-            .prove(provider, &INITIAL_COST_MODEL)
-            .await
-            .expect("warmup prove failed");
+    // A GPU (or Auto) arm must actually be able to use the GPU: without the feature no
+    // backend is linked and every op silently runs on CPU, even under strict mode.
+    if !matches!(device.to_lowercase().as_str(), "cpu" | "blst") {
+        assert!(
+            cfg!(feature = "gpu"),
+            "MIDNIGHT_DEVICE={device} needs a GPU build: add --features gpu \
+             (or set MIDNIGHT_DEVICE=cpu for the CPU arm)"
+        );
+        let status = zkir_v2::init_gpu_backend();
+        eprintln!("  [gpu] init: {status:?}");
+        assert!(
+            matches!(status.v1, zkir_v2::GpuLineStatus::Initialized(_)),
+            "the midnight-proofs 0.7.x GPU backend did not initialize ({:?}); see the \
+             [GPU-FALLBACK] / [GPU-WARN] line above",
+            status.v1
+        );
     }
 
-    // ---- timed iterations ----
-    let mut times_ms: Vec<f64> = Vec::with_capacity(repeat);
-    let mut proof_bytes: Vec<u8> = Vec::new();
-    let mut sizes: Vec<usize> = Vec::new();
-    let mut per_job: BTreeMap<String, Vec<f64>> = BTreeMap::new();
-    let mut jobs_per_tx = 0usize;
-
-    for i in 0..repeat {
-        let (balanced, mut prng) = build_fixture(seed).await; // UNTIMED rebuild
-        let jobs = Arc::new(Mutex::new(Vec::new()));
-        let provider = Recording {
-            inner: LocalProvingProvider {
-                rng: prng.split(),
-                params: &*RESOLVER,
-                resolver: &*RESOLVER,
-            },
-            jobs: jobs.clone(),
+    // ---- warmup (UNTIMED): params, converted params + GPU bases, PK_CACHE, verifier ----
+    let mut first_warmup = None;
+    for j in 0..warmup {
+        let run = prove_tx(seed - 1 - j).await;
+        eprintln!(
+            "  warmup seed={}: parity {:.1} ms, prove {:.1} ms",
+            run.seed, run.parity_ms, run.prove_ms
+        );
+        first_warmup.get_or_insert(run);
+    }
+    // Byte comparisons need to know whether this prover is deterministic.
+    let deterministic = if dump.is_some() || expect.is_some() {
+        let first = match first_warmup {
+            Some(run) => run,
+            None => prove_tx(seed - 1).await,
         };
-
-        let t0 = Instant::now();
-        let proven = balanced
-            .prove(provider, &INITIAL_COST_MODEL)
-            .await
-            .expect("prove failed");
-        let dt: Duration = t0.elapsed();
-        times_ms.push(dt.as_secs_f64() * 1000.0);
-
-        let jobs = jobs.lock().expect("job log poisoned").clone();
-        jobs_per_tx = jobs.len();
-        for (key, ms) in jobs {
-            per_job.entry(key).or_default().push(ms);
-        }
-
-        // serialize the proven tx for size + byte-exact comparison
-        let mut buf = Vec::new();
-        serialize::tagged_serialize(&proven, &mut buf).expect("serialize proof");
-        sizes.push(buf.len());
-        if i == 0 {
-            proof_bytes = buf;
-        } else {
-            let same = buf == proof_bytes;
+        let again = prove_tx(seed - 1).await;
+        let same = first.tx == again.tx;
+        if same {
             eprintln!(
-                "  [determinism] iter {i} vs iter 0: {} (len {} vs {})",
-                if same { "BYTE-IDENTICAL" } else { "DIFFERS" },
-                buf.len(),
-                proof_bytes.len()
+                "  [determinism] seed {} proved twice: BYTE-IDENTICAL",
+                first.seed
+            );
+        } else {
+            eprintln!(
+                "  [determinism] seed {} proved twice: DIFFERS (first at byte {:?}); this \
+                 prover does not reproduce proof bytes",
+                first.seed,
+                first_difference(&first.tx, &again.tx)
             );
         }
-        eprintln!("  iter {i}: {:.1} ms  ({} bytes)", times_ms[i], sizes[i]);
+        same
+    } else {
+        false
+    };
+
+    // ---- timed iterations ----
+    let mut runs = Vec::with_capacity(repeat);
+    for i in 0..repeat {
+        let run = prove_tx(seed + i as u64).await;
+        eprintln!(
+            "  iter {i} seed={}: parity {:.1} ms, prove {:.1} ms ({} bytes)",
+            run.seed,
+            run.parity_ms,
+            run.prove_ms,
+            run.tx.len()
+        );
+        runs.push(run);
     }
 
-    let med = median(times_ms.clone());
-    let mean = times_ms.iter().sum::<f64>() / times_ms.len().max(1) as f64;
+    let parity: Vec<f64> = runs.iter().map(|r| r.parity_ms).collect();
+    let prove: Vec<f64> = runs.iter().map(|r| r.prove_ms).collect();
+    let mut per_job: BTreeMap<String, Vec<f64>> = BTreeMap::new();
+    for job in runs.iter().flat_map(|r| &r.jobs) {
+        per_job.entry(job.key.clone()).or_default().push(job.ms);
+    }
     eprintln!(
-        "== RESULT device={device} median={med:.1}ms mean={mean:.1}ms bytes={} jobs/tx={jobs_per_tx} seed={seed} ==",
-        proof_bytes.len()
+        "== RESULT device={device} parity median={:.1}ms mean={:.1}ms | prove median={:.1}ms \
+         mean={:.1}ms | bytes={:?} jobs/tx={} seeds={seed}..={} ==",
+        median(parity.clone()),
+        mean(&parity),
+        median(prove.clone()),
+        mean(&prove),
+        runs.iter().map(|r| r.tx.len()).collect::<Vec<_>>(),
+        runs.first().map_or(0, |r| r.jobs.len()),
+        seed + repeat as u64 - 1,
     );
     for (key, ms) in &per_job {
         eprintln!(
@@ -320,11 +701,20 @@ async fn real_tx_prove_bench() {
         );
     }
     report_circuits(per_job.keys().cloned()).await;
+    for run in &runs {
+        let (balance, fee) = run.fee_balance;
+        eprintln!(
+            "  [fee] seed {}: Dust balance after its {fee}-speck fee: {balance} ({:+.3}%)",
+            run.seed,
+            balance as f64 * 100.0 / fee as f64
+        );
+    }
 
-    // Optional: dump the proof bytes so a runner can diff CPU vs CUDA byte-for-byte.
-    if let Ok(path) = std::env::var("BENCH_DUMP") {
-        std::fs::write(&path, &proof_bytes).expect("write BENCH_DUMP");
-        eprintln!("   wrote {} proof bytes -> {path}", proof_bytes.len());
+    if let Some(path) = &dump {
+        write_dump(path, deterministic, &runs);
+    }
+    if let Some(path) = &expect {
+        check_expected(path, deterministic, &runs);
     }
 }
 
