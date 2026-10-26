@@ -7,6 +7,10 @@ publish = false
 
 [features]
 default = []
+# GPU proving for both pipelines (see zkir's `gpu`); the external zkir-v3
+# shares the midnight-proofs 0.8.x node with zkir, so it is covered by
+# feature unification once zkir's `gpu-v2` is enabled.
+gpu = ["zkir/gpu"]
 # Disabled for now, as we currently have no experimental features.
 #experimental = []
 

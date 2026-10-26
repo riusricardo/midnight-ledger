@@ -17,6 +17,10 @@ test-utilities = ["dep:reqwest", "dep:zkir_v2", "dep:zkir_v3"]
 proptest = ["dep:proptest", "dep:proptest-derive", "coin-structure/proptest"]
 mock-verify = ["transient-crypto/mock-verify", "zkir_v2/mock-verify"]
 fixed-point-custom-serde = ["base-crypto/fixed-point-custom-serde"]
+# GPU proving. The ledger itself is prover-agnostic (it drives a
+# `ProvingProvider`); the prover lives in zkir, whose `gpu` covers both zk
+# stacks. Pulls zkir in so `--features gpu` is never a silent no-op.
+gpu = ["dep:zkir_v2", "zkir_v2/gpu"]
 
 [dependencies]
 coin-structure = { version = "3.0.0", path = "../coin-structure", package = "midnight-coin-structure" }
@@ -73,6 +77,16 @@ tempfile = "3.20"
 pastey = "0.2.1"
 serde_json = "^1.0.140"
 hex = "^0.4.3"
+# For the ledger-level GPU k-sweep benchmark (tests/gpu_ksweep.rs): drive each
+# prover seam (midnight_proofs::plonk::create_proof) on synthetic circuits.
+# Naming follows zkir: unsuffixed = current (0.8.x) stack, `-v1` = 0.7.x. Both
+# lines are redirected to the GPU forks via the workspace [patch.crates-io].
+midnight-proofs-v1 = { package = "midnight-proofs", version = "0.7" }
+midnight-curves-v1 = { package = "midnight-curves", version = "0.2" }
+midnight-proofs = "0.8"
+midnight-curves = "0.3"
+blake2b_simd = "1"
+rand_chacha = "0.3"
 
 [[bench]]
 name = "benchmarking"

@@ -14,6 +14,20 @@ required-features = ["binary"]
 [features]
 binary = ["dep:log", "dep:tracing-subscriber", "dep:clap", "dep:env_logger", "dep:tokio", "dep:indicatif", "dep:console", "dep:futures-executor"]
 mock-verify = ["transient-crypto-old/mock-verify", "transient-crypto/mock-verify"]
+# GPU acceleration. zkir is the one in-tree crate that links BOTH zk stacks, and
+# `LocalProvingProvider::prove` dispatches between them on the IR version, so
+# this is where `gpu` reaches both pipelines. Cargo unifies features per crate
+# node, so enabling a line here GPU-accelerates every user of that line in the
+# build (transient-crypto-old, zk-stdlib, the external zkir-v3, ...).
+#   gpu-v1: midnight-proofs 0.7.x -- IR V0/V1 (legacy) pipeline: the built-in
+#           Zswap spend/output/sign and Dust spend circuits.
+#   gpu-v2: midnight-proofs 0.8.x -- IR V2+ and zkir-v3: Compact contract
+#           circuits. Enable (and add to `gpu`) once the 0.8.x GPU fork with a
+#           `gpu` feature is patched in; declaring it against a midnight-proofs
+#           without that feature fails workspace resolution.
+gpu = ["gpu-v1"]
+gpu-v1 = ["midnight-proofs-v1/gpu"]
+# gpu-v2 = ["transient-crypto/gpu"]
 proptest = [
   "dep:pastey",
   "dep:proptest",

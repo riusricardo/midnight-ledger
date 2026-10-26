@@ -25,6 +25,26 @@ mod ir_vm;
 pub use ir::{Instruction, IrMinorVersion, IrSource};
 pub use ir_vm::Preprocessed;
 
+/// Eagerly initializes the GPU proving backend(s) compiled into this build
+/// (features `gpu-v1` / `gpu-v2`); a no-op returning `None` without them.
+///
+/// Call once at process start-up, before any proving, so backend loading,
+/// device selection and warm-up happen up front rather than inside the first
+/// proof, and a misconfigured GPU deployment surfaces immediately. Returns the
+/// backend warm-up time when a backend was initialized.
+pub fn init_gpu_backend() -> Option<std::time::Duration> {
+    // midnight-proofs 0.7.x: the legacy (IR V0/V1) pipeline.
+    #[cfg(feature = "gpu-v1")]
+    let warmup = midnight_proofs_v1::init_gpu_backend();
+    #[cfg(not(feature = "gpu-v1"))]
+    let warmup = None;
+    // midnight-proofs 0.8.x: the current (IR V2+, zkir-v3) pipeline, once the
+    // 0.8.x GPU fork exists:
+    // #[cfg(feature = "gpu-v2")]
+    // let warmup = midnight_proofs::init_gpu_backend().or(warmup);
+    warmup
+}
+
 /// Implements `ProvingProvider` locally, dispatching V0/V1 circuits through
 /// the old (zk-stdlib v1) pipeline and V2+ through the current pipeline.
 pub struct LocalProvingProvider<'a, R: Rng + CryptoRng + SplittableRng, S, P> {

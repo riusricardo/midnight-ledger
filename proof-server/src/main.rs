@@ -61,6 +61,12 @@ struct Args {
 async fn main() -> std::io::Result<()> {
     let args = Args::parse();
     init_logging(args.verbose);
+    // GPU builds (`--features gpu`): load and warm the CUDA backend once, on the
+    // main thread, before the worker pool exists, so the first proof does not
+    // pay for it and a misconfigured GPU deployment is visible at startup.
+    if let Some(warmup) = zkir::init_gpu_backend() {
+        info!("GPU proving backend initialized (warm-up {warmup:?})");
+    }
     if !args.no_fetch_params {
         info!("Ensuring zswap key material is available...");
         let resolver = Resolver::new(

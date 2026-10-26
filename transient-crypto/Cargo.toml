@@ -18,6 +18,9 @@ proptest = [
 ]
 mock-verify = []
 public-internal-structure = []
+# GPU acceleration of the 0.8.x (current) prover. Enable once the 0.8.x GPU
+# fork exposing a `gpu` feature is patched in (see zkir's `gpu-v2`).
+# gpu = ["midnight-proofs/gpu"]
 
 [dependencies]
 base-crypto = { version = "1.1.0", path = "../base-crypto", package = "midnight-base-crypto" }
