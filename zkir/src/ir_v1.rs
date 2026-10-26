@@ -729,14 +729,72 @@ impl<P: transient_crypto::proofs::ParamsProverProvider>
         k: u8,
     ) -> std::io::Result<transient_crypto_old::proofs::ParamsProver> {
         let current = self.0.get_params(k).await?;
-        let mut buf = Vec::new();
-        midnight_proofs::poly::kzg::params::ParamsKZG::write_custom(
-            current.as_ref(),
-            &mut buf,
-            midnight_proofs::utils::SerdeFormat::RawBytesUnchecked,
-        )?;
-        transient_crypto_old::proofs::ParamsProver::read(&buf[..])
+        #[cfg(feature = "gpu-v1")]
+        return params_to_v1_cached(&current);
+        #[cfg(not(feature = "gpu-v1"))]
+        params_to_v1(&current)
     }
+}
+
+/// Re-encodes current prover parameters as a new v1 `ParamsProver` instance.
+fn params_to_v1(
+    current: &transient_crypto::proofs::ParamsProver,
+) -> std::io::Result<transient_crypto_old::proofs::ParamsProver> {
+    let mut buf = Vec::new();
+    midnight_proofs::poly::kzg::params::ParamsKZG::write_custom(
+        current.as_ref(),
+        &mut buf,
+        midnight_proofs::utils::SerdeFormat::RawBytesUnchecked,
+    )?;
+    transient_crypto_old::proofs::ParamsProver::read(&buf[..])
+}
+
+/// GPU builds: [`params_to_v1`], reusing one converted instance per live source
+/// instance.
+///
+/// The GPU fork keeps the device copy of the SRS bases per `ParamsKZG` instance,
+/// and [`V1Params`] would otherwise build a brand-new v1 instance for every job,
+/// so every V0/V1 proof would re-normalize and re-upload both base sets. A
+/// provider that keeps returning the same source `Arc` (one that memoizes its
+/// parameters, as a long-running prover should) now gets the same converted
+/// instance back, device bases included.
+///
+/// An entry holds a `Weak` to its source and matches only when that upgrades to
+/// the very `Arc` being looked up, so a freed source can never alias a later
+/// allocation; entries whose source is gone are dropped on the next lookup. A
+/// source that nobody else holds (a provider that re-reads its parameters on
+/// every call, such as `MidnightDataProvider`) can never be asked for again, so
+/// it is converted without being cached.
+#[cfg(feature = "gpu-v1")]
+fn params_to_v1_cached(
+    current: &transient_crypto::proofs::ParamsProver,
+) -> std::io::Result<transient_crypto_old::proofs::ParamsProver> {
+    use std::any::Any;
+    use std::sync::{Arc, Mutex, PoisonError, Weak};
+
+    type Entry = (
+        Weak<dyn Any + Send + Sync>,
+        transient_crypto_old::proofs::ParamsProver,
+    );
+    static CONVERTED: Mutex<Vec<Entry>> = Mutex::new(Vec::new());
+
+    if Arc::strong_count(&current.0) == 1 {
+        return params_to_v1(current);
+    }
+    let mut converted = CONVERTED.lock().unwrap_or_else(PoisonError::into_inner);
+    converted.retain(|(source, _)| source.strong_count() > 0);
+    let hit = converted.iter().find(|(source, _)| {
+        source
+            .upgrade()
+            .is_some_and(|source| std::ptr::addr_eq(Arc::as_ptr(&source), Arc::as_ptr(&current.0)))
+    });
+    if let Some((_, params)) = hit {
+        return Ok(params.clone());
+    }
+    let params = params_to_v1(current)?;
+    let source: Arc<dyn Any + Send + Sync> = current.0.clone();
+    converted.push((Arc::downgrade(&source), params.clone()));
+    Ok(params)
 }
 
 /// GPU builds: checks a proof from the v1 pipeline against the circuit's
@@ -760,4 +818,60 @@ pub(crate) fn self_verify(
         proof,
         pis.iter().copied(),
     )
+}
+
+#[cfg(all(test, feature = "gpu-v1"))]
+mod tests {
+    use super::params_to_v1_cached;
+    use midnight_proofs::poly::kzg::params::ParamsKZG;
+    use midnight_proofs::utils::SerdeFormat;
+    use rand::SeedableRng;
+    use std::sync::Arc;
+    use transient_crypto::proofs::ParamsProver;
+
+    fn source(seed: u64) -> ParamsProver {
+        ParamsProver(Arc::new(ParamsKZG::unsafe_setup(
+            4,
+            rand_chacha::ChaCha8Rng::seed_from_u64(seed),
+        )))
+    }
+
+    #[test]
+    fn converted_params_follow_the_live_source_instance() {
+        // What a memoizing provider keeps, and hands out clones of.
+        let memo = source(1);
+        let a = params_to_v1_cached(&memo.clone()).unwrap();
+        let b = params_to_v1_cached(&memo.clone()).unwrap();
+        assert!(Arc::ptr_eq(&a.0, &b.0), "same live source, same instance");
+
+        // The conversion itself is faithful.
+        let mut current = Vec::new();
+        memo.0
+            .write_custom(&mut current, SerdeFormat::RawBytesUnchecked)
+            .unwrap();
+        let mut converted = Vec::new();
+        a.0.write_custom(
+            &mut converted,
+            midnight_proofs_v1::utils::SerdeFormat::RawBytesUnchecked,
+        )
+        .unwrap();
+        assert!(current == converted);
+
+        // Another instance never matches, even with equal contents.
+        let twin = source(1);
+        let c = params_to_v1_cached(&twin.clone()).unwrap();
+        assert!(!Arc::ptr_eq(&a.0, &c.0));
+
+        // A source that nobody else holds is converted but not cached.
+        let lone = source(2);
+        let d = params_to_v1_cached(&lone).unwrap();
+        let e = params_to_v1_cached(&lone).unwrap();
+        assert!(!Arc::ptr_eq(&d.0, &e.0));
+
+        // Once its source is gone an entry cannot match any later source.
+        drop(memo);
+        let next = source(1);
+        let f = params_to_v1_cached(&next.clone()).unwrap();
+        assert!(!Arc::ptr_eq(&a.0, &f.0));
+    }
 }
