@@ -122,7 +122,8 @@ impl<
                     serialize::Deserializable::deserialize(&mut &pk_buf[..], 0)?;
                 let old_preimage = ir_v1::preimage_to_v1(&preimage);
                 let v1_params = ir_v1::V1Params(self.params);
-                let (proof, _, _) = transient_crypto_old::proofs::Zkir::prove(
+                #[cfg_attr(not(feature = "gpu-v1"), allow(unused_variables))]
+                let (proof, pis, _) = transient_crypto_old::proofs::Zkir::prove(
                     &ir,
                     self.rng,
                     &v1_params,
@@ -130,6 +131,14 @@ impl<
                     &old_preimage,
                 )
                 .await?;
+                // `ProofPreimage::prove` (the V2+ arm below, and every circuit on
+                // Ledger 8) verifies each proof it makes; this direct call does
+                // not. GPU builds restore that check, so a wrong GPU proof fails
+                // here rather than as a transaction rejected on submission.
+                #[cfg(feature = "gpu-v1")]
+                ir_v1::self_verify(&proving_data.verifier_key, &proof, &pis).inspect_err(|e| {
+                    error!(error = ?e, key = %preimage.key_location.0, "self-verification failed! This may be a bug, check that your keys match!");
+                })?;
                 Ok(Proof(proof.0))
             }
             _ => {

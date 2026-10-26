@@ -738,3 +738,26 @@ impl<P: transient_crypto::proofs::ParamsProverProvider>
         transient_crypto_old::proofs::ParamsProver::read(&buf[..])
     }
 }
+
+/// GPU builds: checks a proof from the v1 pipeline against the circuit's
+/// verifier key, as `transient_crypto_old::proofs::ProofPreimage::prove` does
+/// after proving.
+///
+/// Verifies with [`transient_crypto_old::proofs::PARAMS_VERIFIER`], the verifier
+/// parameters the ledger itself checks these proofs with (KZG verifier
+/// parameters do not depend on `k`), instead of loading the prover parameters
+/// a second time.
+#[cfg(feature = "gpu-v1")]
+pub(crate) fn self_verify(
+    verifier_key: &[u8],
+    proof: &transient_crypto_old::proofs::Proof,
+    pis: &[transient_crypto_old::curve::Fr],
+) -> Result<(), anyhow::Error> {
+    let vk: transient_crypto_old::proofs::VerifierKey =
+        serialize::tagged_deserialize(&mut &verifier_key[..])?;
+    vk.verify(
+        &transient_crypto_old::proofs::PARAMS_VERIFIER,
+        proof,
+        pis.iter().copied(),
+    )
+}
