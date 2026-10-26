@@ -25,27 +25,81 @@ mod ir_vm;
 pub use ir::{Instruction, IrMinorVersion, IrSource};
 pub use ir_vm::Preprocessed;
 
+/// Start-up state of one GPU-accelerated midnight-proofs line, as reported by
+/// [`init_gpu_backend`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpuLineStatus {
+    /// This line's GPU support is not compiled into the build.
+    NotCompiled,
+    /// `MIDNIGHT_DEVICE=cpu`: the backend was not touched; the line proves on CPU.
+    Skipped,
+    /// The backend loaded and warmed up, taking the given time.
+    Initialized(std::time::Duration),
+    /// The backend did not load, or its warm-up failed; it printed the cause to
+    /// stderr (`[GPU-FALLBACK]` / `[GPU-WARN]`). The line's operations fall back
+    /// to CPU wherever the GPU is unusable (a panic under `MIDNIGHT_GPU_STRICT`).
+    Failed,
+}
+
+/// Per-line result of [`init_gpu_backend`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GpuInitStatus {
+    /// midnight-proofs 0.7.x (feature `gpu-v1`): IR V0/V1, i.e. every built-in
+    /// Zswap/Dust circuit and compactc's default zkir 2.0 contracts.
+    pub v1: GpuLineStatus,
+    /// midnight-proofs 0.8.x (feature `gpu-v2`): IR V2+ and zkir-v3.
+    pub v2: GpuLineStatus,
+}
+
+impl GpuInitStatus {
+    /// Each line with a human-readable name, for logging.
+    pub fn lines(&self) -> [(&'static str, GpuLineStatus); 2] {
+        [
+            ("midnight-proofs 0.7.x (IR V0/V1)", self.v1),
+            ("midnight-proofs 0.8.x (IR V2+)", self.v2),
+        ]
+    }
+}
+
 /// Eagerly initializes the GPU proving backend(s) compiled into this build
-/// (features `gpu-v1` / `gpu-v2`); a no-op returning `None` without them.
+/// (features `gpu-v1` / `gpu-v2`) and reports each line's outcome separately:
+/// the two lines link separate backend instances, and the 0.7.x one proves
+/// every built-in circuit, so one line coming up must not hide the other
+/// failing.
 ///
 /// Call once at process start-up, before any proving, so backend loading,
 /// device selection and warm-up happen up front rather than inside the first
-/// proof, and a misconfigured GPU deployment surfaces immediately. Returns the
-/// backend warm-up time when a backend was initialized.
-pub fn init_gpu_backend() -> Option<std::time::Duration> {
-    // midnight-proofs 0.7.x: the legacy (IR V0/V1) pipeline.
-    #[cfg(feature = "gpu-v1")]
-    let warmup = midnight_proofs_v1::init_gpu_backend();
-    #[cfg(not(feature = "gpu-v1"))]
-    let warmup = None;
-    // midnight-proofs 0.8.x: the current (IR V2+, zkir-v3) pipeline. A separate
-    // backend instance, so it is warmed separately.
-    #[cfg(feature = "gpu-v2")]
-    let warmup = match (warmup, midnight_proofs::init_gpu_backend()) {
-        (Some(a), Some(b)) => Some(a + b),
-        (a, b) => a.or(b),
+/// proof, and a misconfigured GPU deployment surfaces immediately. With
+/// `MIDNIGHT_DEVICE=cpu` no GPU operation is attempted, so nothing is
+/// initialized (every compiled-in line reports [`GpuLineStatus::Skipped`]).
+pub fn init_gpu_backend() -> GpuInitStatus {
+    #[cfg(any(feature = "gpu-v1", feature = "gpu-v2"))]
+    let init = |line_init: fn() -> Option<std::time::Duration>| {
+        if cpu_device_selected() {
+            GpuLineStatus::Skipped
+        } else {
+            line_init().map_or(GpuLineStatus::Failed, GpuLineStatus::Initialized)
+        }
     };
-    warmup
+    GpuInitStatus {
+        #[cfg(feature = "gpu-v1")]
+        v1: init(midnight_proofs_v1::init_gpu_backend),
+        #[cfg(not(feature = "gpu-v1"))]
+        v1: GpuLineStatus::NotCompiled,
+        #[cfg(feature = "gpu-v2")]
+        v2: init(midnight_proofs::init_gpu_backend),
+        #[cfg(not(feature = "gpu-v2"))]
+        v2: GpuLineStatus::NotCompiled,
+    }
+}
+
+/// Whether `MIDNIGHT_DEVICE` selects CPU-only proving, parsed as the GPU
+/// backend does (`DeviceType::from_env` in midnight-bls12-381-cuda: `cpu` or
+/// `blst`, any case).
+#[cfg(any(feature = "gpu-v1", feature = "gpu-v2"))]
+fn cpu_device_selected() -> bool {
+    std::env::var("MIDNIGHT_DEVICE")
+        .is_ok_and(|device| matches!(device.to_lowercase().as_str(), "cpu" | "blst"))
 }
 
 /// Implements `ProvingProvider` locally, dispatching V0/V1 circuits through

@@ -21,12 +21,13 @@ use ledger::dust::DustResolver;
 use ledger::prove::Resolver;
 use midnight_proof_server::endpoints::PUBLIC_PARAMS;
 use midnight_proof_server::{server, worker_pool::WorkerPool};
-use tracing::{Level, info};
+use tracing::{Level, info, warn};
 use tracing_subscriber::filter::Targets;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{Layer, Registry};
 use transient_crypto::proofs::{KeyLocation, Resolver as ResolverT};
+use zkir::GpuLineStatus;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -64,8 +65,20 @@ async fn main() -> std::io::Result<()> {
     // GPU builds (`--features gpu`): load and warm the CUDA backend once, on the
     // main thread, before the worker pool exists, so the first proof does not
     // pay for it and a misconfigured GPU deployment is visible at startup.
-    if let Some(warmup) = zkir::init_gpu_backend() {
-        info!("GPU proving backend initialized (warm-up {warmup:?})");
+    for (line, status) in zkir::init_gpu_backend().lines() {
+        match status {
+            GpuLineStatus::Initialized(warmup) => {
+                info!("GPU proving backend for {line} initialized (warm-up {warmup:?})")
+            }
+            GpuLineStatus::Failed => warn!(
+                "GPU proving backend for {line} failed to initialize (cause on stderr); \
+                 its proofs fall back to CPU wherever the GPU is unusable"
+            ),
+            GpuLineStatus::Skipped => {
+                info!("MIDNIGHT_DEVICE=cpu: GPU proving backend for {line} not initialized")
+            }
+            GpuLineStatus::NotCompiled => {}
+        }
     }
     if !args.no_fetch_params {
         info!("Ensuring zswap key material is available...");
