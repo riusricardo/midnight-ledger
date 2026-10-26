@@ -19,19 +19,34 @@
 // only if its fork has the `gpu` feature enabled (zkir `gpu-v1` / `gpu-v2`).
 //
 // Backend is chosen per-process (config is OnceLock-frozen), same as the real-tx bench:
-//   MIDNIGHT_DEVICE   = cpu | gpu
+//   MIDNIGHT_DEVICE   = cpu | gpu | (unset => Auto thresholds)
 //   ICICLE_BACKEND_INSTALL_DIR = ~/.local/icicle-backends/ours   (gpu arm)
 //   MIDNIGHT_GPU_STRICT = 1   (gpu arm: panic on any silent CPU fallback)
+// Unless MIDNIGHT_DEVICE=cpu, a sweep requires its line's GPU feature (`gpu` for the
+// 0.7.x sweep, `gpu-v2` for the 0.8.x one), initializes that line's backend before
+// timing and panics if it did not come up, so a "gpu" table is never CPU numbers.
 // Tunables:
 //   KSWEEP_KS      (default "14,15,16,17,18,19")
 //   KSWEEP_REPEAT  (default 3)   timed proves per k; the MEDIAN is reported
 //
-// Run (from midnight-ledger/):
-//   BIN=target/release/deps/gpu_ksweep-*
-//   LD_LIBRARY_PATH=$PWD/target/release/deps/icicle/lib \
-//   MIDNIGHT_DEVICE=gpu MIDNIGHT_GPU_STRICT=1 \
-//   ICICLE_BACKEND_INSTALL_DIR=~/.local/icicle-backends/ours \
-//     ./$BIN --exact gpu_ksweep_bench --ignored --nocapture
+// Run one sweep per invocation, selected with --exact (`gpu_ksweep_bench` alone is a
+// substring filter that also matches `gpu_ksweep_bench_v2`). The two sweeps also
+// hold a shared lock, so an unfiltered `--ignored` runs them one after the other
+// rather than on parallel test threads contending for the GPU. From midnight-ledger-v9/:
+//   export MIDNIGHT_DEVICE=gpu MIDNIGHT_GPU_STRICT=1 \
+//     ICICLE_BACKEND_INSTALL_DIR=~/.local/icicle-backends/ours
+//   # 0.7.x (Zswap/Dust) line:
+//   cargo test --release -p midnight-ledger-v9 --features proving,test-utilities,gpu \
+//     --test gpu_ksweep -- --ignored --nocapture --exact gpu_ksweep_bench
+//   # 0.8.x (contract) line:
+//   cargo test --release -p midnight-ledger-v9 --features proving,test-utilities,gpu-v2 \
+//     --test gpu_ksweep -- --ignored --nocapture --exact gpu_ksweep_bench_v2
+// (Running the test binary directly also needs
+//  LD_LIBRARY_PATH=$PWD/target/release/deps/icicle/lib.)
+
+/// Held by each sweep for its whole run: libtest runs the selected tests on parallel
+/// threads, and two sweeps sharing the GPU (and the CPU) would skew both tables.
+static SWEEP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn median(mut xs: Vec<f64>) -> f64 {
     xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -65,8 +80,9 @@ fn env_usize(key: &str, default: usize) -> usize {
 }
 
 /// Circuit + per-k benchmark, expanded once per midnight-proofs line. Expects the
-/// expansion site to have `proofs` / `curves` in scope (the crate under test) and a
-/// `create_proof_kzg` shim (the two lines order create_proof's trailing args differently).
+/// expansion site to have `proofs` / `curves` in scope (the crate under test), a
+/// `create_proof_kzg` shim (the two lines order create_proof's trailing args differently)
+/// and `GPU_FEATURE`.
 macro_rules! ksweep_impl {
     () => {
         use blake2b_simd::State as Blake2bState;
@@ -158,6 +174,9 @@ macro_rules! ksweep_impl {
         /// Per-k CPU-or-GPU proving benchmark (whichever backend this process is
         /// configured for). Reports keygen / prove(median) / verify ms and proof size.
         pub(super) fn run(label: &str, ks: &[u32], repeat: usize) {
+            let _serial = super::SWEEP_LOCK
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let device = std::env::var("MIDNIGHT_DEVICE").unwrap_or_else(|_| "auto".into());
             let strict = std::env::var("MIDNIGHT_GPU_STRICT").unwrap_or_else(|_| "0".into());
             let backend = std::env::var("ICICLE_BACKEND_INSTALL_DIR")
@@ -167,6 +186,21 @@ macro_rules! ksweep_impl {
                 "== gpu_ksweep_bench [{label}] :: device={device} strict={strict} repeat={repeat} =="
             );
             eprintln!("   backend_dir={backend}");
+            if !matches!(device.to_lowercase().as_str(), "cpu" | "blst") {
+                assert!(
+                    GPU_FEATURE.1,
+                    "MIDNIGHT_DEVICE={device} needs this line's GPU build: add --features {} \
+                     (or set MIDNIGHT_DEVICE=cpu for a CPU sweep)",
+                    GPU_FEATURE.0
+                );
+                let warmup = proofs::init_gpu_backend();
+                assert!(
+                    warmup.is_some(),
+                    "the {label} GPU backend did not initialize; see the [GPU-FALLBACK] / \
+                     [GPU-WARN] line above"
+                );
+                eprintln!("   gpu backend initialized (warm-up {warmup:?})");
+            }
             eprintln!(
                 "{:>4} {:>11} {:>13} {:>11} {:>10}",
                 "k", "keygen_ms", "prove_ms(med)", "verify_ms", "bytes"
@@ -231,6 +265,9 @@ mod v1 {
     use midnight_curves_v1 as curves;
     use midnight_proofs_v1 as proofs;
 
+    /// The ledger feature that GPU-accelerates this line, and whether it is on.
+    const GPU_FEATURE: (&str, bool) = ("gpu", cfg!(feature = "gpu"));
+
     // 0.7.x: create_proof(params, pk, circuits, nb_committed_instances, instances, rng, transcript).
     // committed-instances is always ON in the ledger build, so the `0` is unconditional.
     fn create_proof_kzg(
@@ -262,6 +299,9 @@ mod v2 {
     use midnight_curves as curves;
     use midnight_proofs as proofs;
 
+    /// The ledger feature that GPU-accelerates this line, and whether it is on.
+    const GPU_FEATURE: (&str, bool) = ("gpu-v2", cfg!(feature = "gpu-v2"));
+
     // 0.8.x: create_proof(params, pk, circuits, nb_committed_instances, instances, transcript, rng)
     // -- the transcript and rng arguments swapped places relative to 0.7.x.
     fn create_proof_kzg(
@@ -290,7 +330,7 @@ mod v2 {
 
 /// k-sweep on midnight-proofs 0.7.x (the line that proves the real Zswap/Dust tx).
 #[test]
-#[ignore = "benchmark; run explicitly with --ignored --nocapture and MIDNIGHT_DEVICE set"]
+#[ignore = "benchmark; run with --ignored --nocapture --exact gpu_ksweep_bench and MIDNIGHT_DEVICE set"]
 fn gpu_ksweep_bench() {
     let ks = env_list_u32("KSWEEP_KS", &[14, 15, 16, 17, 18, 19]);
     let repeat = env_usize("KSWEEP_REPEAT", 3);
@@ -299,7 +339,7 @@ fn gpu_ksweep_bench() {
 
 /// k-sweep on midnight-proofs 0.8.x (the line that proves Compact contract circuits).
 #[test]
-#[ignore = "benchmark; run explicitly with --ignored --nocapture and MIDNIGHT_DEVICE set"]
+#[ignore = "benchmark; run with --ignored --nocapture --exact gpu_ksweep_bench_v2 and MIDNIGHT_DEVICE set"]
 fn gpu_ksweep_bench_v2() {
     let ks = env_list_u32("KSWEEP_KS", &[14, 15, 16, 17, 18, 19]);
     let repeat = env_usize("KSWEEP_REPEAT", 3);
