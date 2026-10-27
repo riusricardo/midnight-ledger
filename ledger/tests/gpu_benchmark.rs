@@ -55,8 +55,11 @@
 // lookup argument (`permute_expression_pair`, src/plonk/lookup/prover.rs:399 and
 // :430 upstream, :455 and :485 in the GPU fork) fills the permuted table's repeated
 // rows by iterating a std `HashMap`, whose order is random per map instance. Two
-// proves of one seed therefore differ, on CPU as on GPU; with that map made a
-// BTreeMap, this benchmark's proofs are byte-identical across processes. So a run
+// proves of one seed therefore differ, on CPU as on GPU. The GPU forks' opt-in
+// feature `deterministic-lookups` fills those rows in value order instead, and this
+// crate's dev-dependencies enable it, so test builds (this benchmark) prove
+// byte-identically across processes and devices; the library and the proof server
+// keep upstream's behaviour. A run
 // with BENCH_DUMP or BENCH_EXPECT first proves the warmup seed twice to learn
 // whether its prover is deterministic, and BENCH_EXPECT then requires:
 //   - both runs deterministic: every sealed tx identical, byte for byte;
