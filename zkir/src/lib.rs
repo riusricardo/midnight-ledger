@@ -70,9 +70,9 @@ impl std::fmt::Display for GpuCalibrationSource {
     }
 }
 
-/// The GPU/CPU crossovers one line's prover routes by, read back from that
-/// line's backend instance once [`init_gpu_backend`] has made its calibration
-/// effective. Under `MIDNIGHT_DEVICE=auto` (the default), MSMs of at least
+/// The GPU/CPU crossovers one line's prover routes by, read back from the
+/// backend (one instance, shared by both lines) once [`init_gpu_backend`] has
+/// made its calibration effective. Under `MIDNIGHT_DEVICE=auto` (the default), MSMs of at least
 /// 2^`msm_min_k` points and NTTs of at least 2^`ntt_min_k` elements run on the
 /// GPU and smaller ones on CPU; `MIDNIGHT_DEVICE=gpu` sends every operation to
 /// the GPU regardless.
@@ -159,15 +159,17 @@ impl GpuInitStatus {
     }
 }
 
-/// One line's handle on its backend instance's autotune. The two lines link
-/// separate copies of the backend crate, whose report types differ, so
-/// `gpu_line_calibration!` adapts either one to this.
+/// One line's handle on the backend's autotune, reached through that line's
+/// midnight-proofs fork. Both forks re-export the one backend crate, but this
+/// crate names its types only through a fork's `gpu_accel` (either fork may be
+/// compiled out), so `gpu_line_calibration!` adapts each path to this.
 #[cfg(any(feature = "gpu-v1", feature = "gpu-v2"))]
 struct GpuLineCalibration {
     /// The backend's `min_gpu_size` / `min_ntt_gpu_size`: the crossovers its
     /// prover routes by. Unless pinned by its env override, the first call to
-    /// either loads the calibration into the instance: the persisted one if it
-    /// matches this machine, else one it measures and persists.
+    /// either, from whichever line, loads the calibration once per process:
+    /// the persisted one if it matches this machine, else one it measures and
+    /// persists. A later call from the other line reads the loaded values.
     msm_min_size: fn() -> usize,
     ntt_min_size: fn() -> usize,
     /// `calibration_report()`: env overrides and the persisted calibration.
@@ -225,8 +227,8 @@ macro_rules! gpu_line_calibration {
 
 #[cfg(any(feature = "gpu-v1", feature = "gpu-v2"))]
 impl GpuLineCalibration {
-    /// Makes the calibration effective in this line's backend instance now,
-    /// rather than inside its first proof, and reads back the crossovers its
+    /// Makes the calibration effective in the backend now, rather than inside
+    /// this line's first proof, and reads back the crossovers this line's
     /// prover uses.
     fn make_effective(&self) -> GpuCalibration {
         // The backend's own lazy load (nothing is measured under
@@ -276,11 +278,15 @@ fn effective_source(
     }
 }
 
-/// Eagerly initializes the GPU proving backend(s) compiled into this build
-/// (features `gpu-v1` / `gpu-v2`) and reports each line's outcome separately:
-/// the two lines link separate backend instances, and the 0.7.x one proves
-/// every built-in circuit, so one line coming up must not hide the other
-/// failing.
+/// Eagerly initializes the GPU proving line(s) compiled into this build
+/// (features `gpu-v1` / `gpu-v2`) and reports each line's outcome separately.
+/// Both lines link ONE instance of the CUDA backend crate: the backend load,
+/// the device, the NTT domain and the calibration are process-wide and happen
+/// once, on the first line initialized; the second line's initialization
+/// reaches only the backend's typed layer for its own curves (its warm-up
+/// MSM). The outcome is still per line, as the 0.7.x line proves every
+/// built-in circuit, so one line coming up must not hide the other failing
+/// to warm up.
 ///
 /// Call once at process start-up, before any proving, so backend loading,
 /// device selection, warm-up and calibration happen up front rather than
@@ -289,19 +295,18 @@ fn effective_source(
 /// nothing is initialized (every compiled-in line reports
 /// [`GpuLineStatus::Skipped`]).
 ///
-/// Calibration: each backend instance loads its GPU/CPU crossovers on the
-/// first size check, from the file the autotune persisted for this machine,
-/// or by measuring them (about a second) and persisting the result if there
-/// is none. This function makes that happen here, for each line that came up,
-/// in order: the 0.7.x line measures if anything must be measured, and the
-/// 0.8.x line then loads what it persisted. So the two instances never
-/// measure at the same time or inside a proof, and they prove with the same
-/// crossovers, reported per line. `MIDNIGHT_AUTOTUNE=0` turns calibration off
-/// (built-in defaults; nothing is measured). `MIDNIGHT_AUTOTUNE=refresh`
-/// re-measures in every instance, one after the other; [`autotune_cli`] with
-/// `--refresh` re-measures once for both lines instead. A line that failed to
-/// load or warm up is not calibrated, as timings taken on it would be
-/// meaningless.
+/// Calibration: the backend loads its GPU/CPU crossovers once per process, on
+/// the first size check, from the file the autotune persisted for this
+/// machine, or by measuring them (about a second) and persisting the result if
+/// there is none. This function makes that happen here, right after the first
+/// line that came up warmed up (the 0.7.x line, when both are compiled in);
+/// the other line then reads the values already loaded. So nothing is measured
+/// inside a proof, and both lines prove with the same crossovers, reported per
+/// line. `MIDNIGHT_AUTOTUNE=0` turns calibration off (built-in defaults;
+/// nothing is measured). `MIDNIGHT_AUTOTUNE=refresh` re-measures once, at that
+/// first load; [`autotune_cli`] with `--refresh` does the same from the
+/// command line. A line that failed to load or warm up is not calibrated, as
+/// timings taken on it would be meaningless.
 pub fn init_gpu_backend() -> GpuInitStatus {
     #[cfg(feature = "gpu-v1")]
     let (v1, v1_calibration) = init_gpu_line(
@@ -310,7 +315,8 @@ pub fn init_gpu_backend() -> GpuInitStatus {
     );
     #[cfg(not(feature = "gpu-v1"))]
     let (v1, v1_calibration) = (GpuLineStatus::NotCompiled, None);
-    // Only after the 0.7.x line has calibrated (see above).
+    // After the 0.7.x line: the calibration it loaded (once per process) is
+    // what this line reads back (see above).
     #[cfg(feature = "gpu-v2")]
     let (v2, v2_calibration) = init_gpu_line(
         midnight_proofs::init_gpu_backend,
@@ -368,11 +374,12 @@ fn cpu_device_selected() -> bool {
 /// Exit codes: `0` calibrated values in effect, `2` no GPU or
 /// `MIDNIGHT_AUTOTUNE=0` (built-in defaults in effect), `1` failure.
 ///
-/// Both lines' backend instances read one file (`MIDNIGHT_AUTOTUNE_CACHE`, an
-/// absolute path, else `autotune-v1.conf` in `$XDG_CACHE_HOME/midnight-gpu`
-/// or `~/.cache/midnight-gpu`), so this runs the command in the 0.7.x line's
-/// instance (the 0.8.x line's in a build with `gpu-v2` alone). In a build
-/// without either it prints why to stderr and returns 2, as for a missing GPU.
+/// Both lines share one backend, which reads one file
+/// (`MIDNIGHT_AUTOTUNE_CACHE`, an absolute path, else `autotune-v1.conf` in
+/// `$XDG_CACHE_HOME/midnight-gpu` or `~/.cache/midnight-gpu`), so this reaches
+/// the command through the 0.7.x line's fork (the 0.8.x line's in a build with
+/// `gpu-v2` alone); it is the same command either way. In a build without
+/// either it prints why to stderr and returns 2, as for a missing GPU.
 pub fn autotune_cli<I, S>(program: &str, args: I) -> u8
 where
     I: IntoIterator<Item = S>,
