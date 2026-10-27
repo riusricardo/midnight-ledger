@@ -81,8 +81,11 @@ midnight-transient-crypto = { path = "transient-crypto" }
 # sha3-circuit, transient-crypto-old (git), midnight-zkir 3.1 (git) -- then
 # links the patched crate, so circuits/zk-stdlib need no patch of their own.
 # Both forks are expected as siblings of this checkout:
-#   v1 line (0.7.x / 0.2.x): midnight-zk-gpu (branch main) -- legacy zkir pipeline
-#     (IR V0/V1): Zswap spend/output/sign, Dust spend, compactc's default zkir 2.0.
+#   v1 line (0.7.x / 0.2.x): midnight-zk-gpu (branch ledger9-hardening) -- legacy
+#     zkir pipeline (IR V0/V1): Zswap spend/output/sign, Dust spend, compactc's
+#     default zkir 2.0. Not its `main`: that lacks the CPU fallbacks this ledger
+#     relies on (GpuLineStatus::Failed, the proof server's start-up warning), so a
+#     batch commit there panics where the GPU is unusable.
 midnight-proofs = { path = "../midnight-zk-gpu/proofs" }
 midnight-curves = { path = "../midnight-zk-gpu/curves" }
 #   v2 line (0.8.x / 0.3.x): midnight-zk-gpu-v2 (branch port/proofs-0.8.2) -- current
