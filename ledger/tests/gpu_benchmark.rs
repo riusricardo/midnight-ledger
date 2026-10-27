@@ -24,12 +24,15 @@
 //           Transaction::prove + proof verification + seal + tagged serialization
 //   prove   Transaction::prove alone (the five proof jobs)
 // In `gpu` builds zkir self-verifies every V0 proof inside Transaction::prove (as
-// Ledger 8 and the reference do), so verification is part of both numbers. Builds
+// Ledger 8 and the reference do), so verification is part of both numbers, and the
+// output calls the second one (and each job's time) `prove+self-verify`. Builds
 // without `gpu` keep upstream Ledger 9's unverified V0 path, so there the ledger's
 // well-formedness check is timed in its place to keep the parity region the same
 // shape; use one `gpu` build for both arms so they measure the same work. Every
 // sealed tx also passes the ledger's well-formedness check after the timers (proofs
 // against the built-in verifier keys, binding, signatures, limits); failure panics.
+// That check is timed on its own as `wf-check`: it verifies the same five proofs, so
+// it shows roughly how much of `prove+self-verify` is verification.
 // The one check skipped is fee balancing: TestState::balance_tx pays the fee it
 // estimates for the unproven, unsealed tx, which falls short of the sealed tx's fee
 // (by about 0.24% here, mostly the cost of checking the seal's binding), so the
@@ -143,6 +146,13 @@ lazy_static! {
 
 /// In `gpu` builds zkir verifies every V0 proof inside `Transaction::prove`.
 const PROVER_SELF_VERIFIES: bool = cfg!(feature = "gpu");
+
+/// What the `prove_ms` figures (and the per-job times) measure.
+const PROVE: &str = if PROVER_SELF_VERIFIES {
+    "prove+self-verify"
+} else {
+    "prove"
+};
 
 type SealedTx = Transaction<(), ProofMarker, PureGeneratorPedersen, InMemoryDB>;
 
@@ -311,6 +321,9 @@ struct Proven {
     seed: u64,
     parity_ms: f64,
     prove_ms: f64,
+    /// The ledger's well-formedness check of the sealed tx (part of `parity_ms` only
+    /// in builds without `gpu`).
+    check_ms: f64,
     /// The tagged serialization of the sealed tx.
     tx: Vec<u8>,
     /// The same with every proof erased.
@@ -387,16 +400,17 @@ async fn prove_tx(seed: u64) -> Proven {
     let prove_ms = ms_since(t_prove);
 
     let sealed: SealedTx = proven.seal(rng.split());
-    if !PROVER_SELF_VERIFIES {
+    let check = || {
+        let t_check = Instant::now();
         assert_well_formed(&state, &sealed, format_args!("seed {seed}"));
-    }
+        ms_since(t_check)
+    };
+    let check_in_parity = (!PROVER_SELF_VERIFIES).then(check);
     let mut tx_bytes = Vec::new();
     serialize::tagged_serialize(&sealed, &mut tx_bytes).expect("serialize tx");
     let parity_ms = ms_since(t_parity);
 
-    if PROVER_SELF_VERIFIES {
-        assert_well_formed(&state, &sealed, format_args!("seed {seed}"));
-    }
+    let check_ms = check_in_parity.unwrap_or_else(check);
     let fee_balance = dust_fee_balance(&state, &sealed);
     let mut erased = Vec::new();
     serialize::tagged_serialize(&sealed.erase_proofs(), &mut erased).expect("serialize tx");
@@ -406,6 +420,7 @@ async fn prove_tx(seed: u64) -> Proven {
         seed,
         parity_ms,
         prove_ms,
+        check_ms,
         tx: tx_bytes,
         erased,
         jobs,
@@ -701,7 +716,7 @@ async fn real_tx_prove_bench() {
     for j in 0..warmup {
         let run = prove_tx(seed - 1 - j).await;
         eprintln!(
-            "  warmup seed={}: parity {:.1} ms, prove {:.1} ms",
+            "  warmup seed={}: parity {:.1} ms, {PROVE} {:.1} ms",
             run.seed, run.parity_ms, run.prove_ms
         );
         first_warmup.get_or_insert(run);
@@ -737,7 +752,7 @@ async fn real_tx_prove_bench() {
     for i in 0..repeat {
         let run = prove_tx(seed + i as u64).await;
         eprintln!(
-            "  iter {i} seed={}: parity {:.1} ms, prove {:.1} ms ({} bytes)",
+            "  iter {i} seed={}: parity {:.1} ms, {PROVE} {:.1} ms ({} bytes)",
             run.seed,
             run.parity_ms,
             run.prove_ms,
@@ -748,25 +763,28 @@ async fn real_tx_prove_bench() {
 
     let parity: Vec<f64> = runs.iter().map(|r| r.parity_ms).collect();
     let prove: Vec<f64> = runs.iter().map(|r| r.prove_ms).collect();
+    let check: Vec<f64> = runs.iter().map(|r| r.check_ms).collect();
     let mut per_job: BTreeMap<String, Vec<f64>> = BTreeMap::new();
     for job in runs.iter().flat_map(|r| &r.jobs) {
         per_job.entry(job.key.clone()).or_default().push(job.ms);
     }
     eprintln!(
-        "== RESULT device={device} params_cache={} parity median={:.1}ms mean={:.1}ms | prove \
-         median={:.1}ms mean={:.1}ms | bytes={:?} jobs/tx={} seeds={seed}..={} ==",
+        "== RESULT device={device} params_cache={} parity median={:.1}ms mean={:.1}ms | {PROVE} \
+         median={:.1}ms mean={:.1}ms | wf-check median={:.1}ms | bytes={:?} jobs/tx={} \
+         seeds={seed}..={} ==",
         PARAMS.enabled,
         median(parity.clone()),
         mean(&parity),
         median(prove.clone()),
         mean(&prove),
+        median(check),
         runs.iter().map(|r| r.tx.len()).collect::<Vec<_>>(),
         runs.first().map_or(0, |r| r.jobs.len()),
         seed + repeat as u64 - 1,
     );
     for (key, ms) in &per_job {
         eprintln!(
-            "  [job] {key:<24} count={:<3} per-job median={:.1}ms",
+            "  [job] {key:<24} count={:<3} per-job {PROVE} median={:.1}ms",
             ms.len(),
             median(ms.clone())
         );
