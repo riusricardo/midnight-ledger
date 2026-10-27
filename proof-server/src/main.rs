@@ -27,9 +27,10 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{Layer, Registry};
 use transient_crypto::proofs::{KeyLocation, Resolver as ResolverT};
-use zkir::GpuLineStatus;
+use zkir::{GpuCalibration, GpuLineStatus};
 
 #[derive(Parser, Debug)]
+#[cfg_attr(feature = "gpu", command(after_help = AUTOTUNE_HELP))]
 struct Args {
     #[arg(
         short,
@@ -58,17 +59,45 @@ struct Args {
     no_fetch_params: bool,
 }
 
+/// The `autotune` subcommand, listed under `--help` in GPU builds.
+#[cfg(feature = "gpu")]
+const AUTOTUNE_HELP: &str = "\
+GPU calibration:
+  midnight-proof-server autotune [--refresh | --show] [--quiet]
+      Measures this machine's GPU/CPU crossovers and persists them, unless
+      they are persisted already (--refresh re-measures; --show prints the
+      values in effect and never measures). The server loads them at start-up,
+      measuring first if there are none. The file is MIDNIGHT_AUTOTUNE_CACHE,
+      else midnight-gpu/autotune-v1.conf in $XDG_CACHE_HOME or ~/.cache.";
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // GPU builds mount the CUDA backend's calibration command as a subcommand.
+    // It is dispatched before clap parses, so its flags, output and exit codes
+    // are those of the backend's standalone `midnight-gpu-autotune`.
+    #[cfg(feature = "gpu")]
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "autotune")
+    {
+        let code = zkir::autotune_cli("midnight-proof-server autotune", std::env::args().skip(2));
+        std::process::exit(code.into());
+    }
     let args = Args::parse();
     init_logging(args.verbose);
     // GPU builds (`--features gpu`): load and warm the CUDA backend once, on the
-    // main thread, before the worker pool exists, so the first proof does not
-    // pay for it and a misconfigured GPU deployment is visible at startup.
-    for (line, status) in zkir::init_gpu_backend().lines() {
+    // main thread, before the worker pool exists, and make its calibration
+    // effective (measuring it first if none is persisted for this machine), so
+    // the first proof pays for neither and a misconfigured GPU deployment is
+    // visible at startup.
+    let gpu = zkir::init_gpu_backend();
+    for (line, status, calibration) in gpu.lines_with_calibration() {
         match status {
             GpuLineStatus::Initialized(warmup) => {
-                info!("GPU proving backend for {line} initialized (warm-up {warmup:?})")
+                info!("GPU proving backend for {line} initialized (warm-up {warmup:?})");
+                if let Some(calibration) = calibration {
+                    log_gpu_calibration(line, calibration);
+                }
             }
             GpuLineStatus::Failed => warn!(
                 "GPU proving backend for {line} failed to initialize (cause on stderr); \
@@ -79,6 +108,15 @@ async fn main() -> std::io::Result<()> {
             }
             GpuLineStatus::NotCompiled => {}
         }
+    }
+    if let (Some(v1), Some(v2)) = (gpu.v1_calibration, gpu.v2_calibration)
+        && (v1.msm_min_k, v1.ntt_min_k) != (v2.msm_min_k, v2.ntt_min_k)
+    {
+        warn!(
+            "the GPU proving lines run with different crossovers (each measured its own, \
+             e.g. under MIDNIGHT_AUTOTUNE=refresh); `midnight-proof-server autotune \
+             --refresh` measures once for both"
+        );
     }
     if !args.no_fetch_params {
         info!("Ensuring zswap key material is available...");
@@ -114,6 +152,24 @@ async fn main() -> std::io::Result<()> {
         .unwrap()
         .0
         .await
+}
+
+/// Logs where a line's GPU/CPU crossovers come from, warning if any is the
+/// backend's built-in default rather than measured on this machine.
+fn log_gpu_calibration(line: &str, calibration: GpuCalibration) {
+    info!("GPU calibration for {line}: {calibration}");
+    if calibration.on_fallback() {
+        match calibration.source() {
+            zkir::GpuCalibrationSource::Disabled => warn!(
+                "MIDNIGHT_AUTOTUNE=0: {line} proves with the built-in GPU crossovers, \
+                 not ones measured on this machine"
+            ),
+            _ => warn!(
+                "{line} proves with the built-in GPU crossovers: no calibration could be \
+                 measured or loaded; check `midnight-proof-server autotune --show`"
+            ),
+        }
+    }
 }
 
 fn init_logging(verbose: bool) {
