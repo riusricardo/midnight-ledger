@@ -2113,47 +2113,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "halo2curves"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d380afeef3f1d4d3245b76895172018cfb087d9976a7cabcd5597775b2933e07"
-dependencies = [
- "blake2",
- "digest 0.10.7",
- "ff",
- "group",
- "halo2derive 0.1.0",
- "lazy_static",
- "num-bigint",
- "num-integer",
- "num-traits",
- "pairing",
- "pasta_curves",
- "paste",
- "rand 0.8.6",
- "rand_core 0.6.4",
- "rayon",
- "sha2 0.10.9",
- "static_assertions",
- "subtle",
- "unroll",
-]
-
-[[package]]
-name = "halo2derive"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdb99e7492b4f5ff469d238db464131b86c2eaac814a78715acba369f64d2c76"
-dependencies = [
- "num-bigint",
- "num-integer",
- "num-traits",
- "proc-macro2",
- "quote 1.0.45",
- "syn 1.0.109",
-]
-
-[[package]]
 name = "halo2derive"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2889,9 +2848,6 @@ name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
-dependencies = [
- "spin 0.9.9",
-]
 
 [[package]]
 name = "leb128fmt"
@@ -3100,31 +3056,14 @@ dependencies = [
 
 [[package]]
 name = "midnight-bls12-381-cuda"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "ff",
  "group",
- "halo2curves",
  "icicle-bls12-381",
  "icicle-core",
  "icicle-runtime",
  "midnight-curves 0.2.1",
- "once_cell",
- "rayon",
- "static_assertions",
- "tracing",
-]
-
-[[package]]
-name = "midnight-bls12-381-cuda"
-version = "0.2.0"
-dependencies = [
- "ff",
- "group",
- "halo2curves",
- "icicle-bls12-381",
- "icicle-core",
- "icicle-runtime",
  "midnight-curves 0.3.1",
  "once_cell",
  "rayon",
@@ -3210,7 +3149,7 @@ dependencies = [
  "ff",
  "getrandom 0.2.17",
  "group",
- "halo2derive 0.2.0",
+ "halo2derive",
  "hex",
  "lazy_static",
  "num-bigint",
@@ -3491,7 +3430,7 @@ dependencies = [
  "getrandom 0.2.17",
  "group",
  "icicle-runtime",
- "midnight-bls12-381-cuda 0.1.0",
+ "midnight-bls12-381-cuda",
  "midnight-curves 0.2.1",
  "num-bigint",
  "once_cell",
@@ -3514,7 +3453,7 @@ dependencies = [
  "group",
  "icicle-runtime",
  "itertools 0.14.0",
- "midnight-bls12-381-cuda 0.2.0",
+ "midnight-bls12-381-cuda",
  "midnight-curves 0.3.1",
  "num-bigint",
  "once_cell",
@@ -4365,21 +4304,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pasta_curves"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3437083215c505e867eea5478371feba43d7689d6d15ec0a209eb46fb0d4cda6"
-dependencies = [
- "blake2b_simd",
- "ff",
- "group",
- "lazy_static",
- "rand 0.8.6",
- "static_assertions",
- "subtle",
-]
-
-[[package]]
 name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4557,7 +4481,7 @@ dependencies = [
  "nix 0.26.4",
  "once_cell",
  "smallvec",
- "spin 0.10.0",
+ "spin",
  "symbolic-demangle",
  "tempfile",
  "thiserror 2.0.18",
@@ -5692,12 +5616,6 @@ dependencies = [
 
 [[package]]
 name = "spin"
-version = "0.9.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
-
-[[package]]
-name = "spin"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
@@ -6291,16 +6209,6 @@ name = "unit-prefix"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81e544489bf3d8ef66c953931f56617f423cd4b5494be343d9b9d3dda037b9a3"
-
-[[package]]
-name = "unroll"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ad948c1cb799b1a70f836077721a92a35ac177d4daddf4c20a633786d4cf618"
-dependencies = [
- "quote 1.0.45",
- "syn 1.0.109",
-]
 
 [[package]]
 name = "untrusted"
