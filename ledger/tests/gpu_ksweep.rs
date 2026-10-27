@@ -27,6 +27,11 @@
 // line's backend before timing and panics if it did not come up, so a "gpu" table is
 // never CPU numbers. Under Auto it also prints the line's effective MSM / NTT size
 // thresholds, below which operations stay on CPU by design.
+// Each k proves once untimed first: the first prove on fresh params also uploads their
+// SRS bases to the GPU, a one-time cost the CPU arm does not have. Every proof, that
+// one included, then passes the KZG pairing check with both MSMs evaluated by BLST:
+// under MIDNIGHT_DEVICE=gpu the library verifier's MSMs (the timed verify_ms) run on
+// the GPU too, so they cannot check the GPU prover independently.
 // Tunables:
 //   KSWEEP_KS      (default "14,15,16,17,18,19")
 //   KSWEEP_REPEAT  (default 3)   timed proves per k; the MEDIAN is reported
@@ -99,11 +104,14 @@ fn env_usize(key: &str, default: usize) -> usize {
 /// Circuit + per-k benchmark, expanded once per midnight-proofs line. Expects the
 /// expansion site to have `proofs` / `curves` in scope (the crate under test), a
 /// `create_proof_kzg` shim (the two lines order create_proof's trailing args differently),
-/// `GPU_FEATURE` and `gpu_backend_info`.
+/// a `split_guard` shim (their `DualMSM::split` terms differ), `GPU_FEATURE` and
+/// `gpu_backend_info`.
 macro_rules! ksweep_impl {
     () => {
         use blake2b_simd::State as Blake2bState;
-        use curves::{Bls12, Fq};
+        use curves::pairing::group::{Curve as _, Group as _};
+        use curves::pairing::{MillerLoopResult as _, MultiMillerLoop as _};
+        use curves::{Bls12, Fq, G1Projective, G2Prepared};
         use proofs::{
             circuit::{Layouter, SimpleFloorPlanner, Value},
             plonk::{
@@ -112,7 +120,7 @@ macro_rules! ksweep_impl {
             },
             poly::{
                 commitment::Guard,
-                kzg::{params::ParamsKZG, KZGCommitmentScheme},
+                kzg::{msm::DualMSM, params::ParamsKZG, KZGCommitmentScheme},
                 Rotation,
             },
             transcript::{CircuitTranscript, Transcript},
@@ -188,8 +196,24 @@ macro_rules! ksweep_impl {
             }
         }
 
+        /// The pairing check of `DualMSM::check`, with both MSMs evaluated by BLST
+        /// (`G1Projective::multi_exp`) instead of `msm_specific`, which runs on the GPU
+        /// under MIDNIGHT_DEVICE=gpu.
+        fn verifies_on_blst(params: &ParamsKZG<Bls12>, guard: &DualMSM<Bls12>) -> bool {
+            let [left, right] = split_guard(guard)
+                .map(|(scalars, bases)| G1Projective::multi_exp(&bases, &scalars).to_affine());
+            let s_g2 = G2Prepared::from(params.s_g2().to_affine());
+            let n_g2 = G2Prepared::from((-params.g2()).to_affine());
+            bool::from(
+                Bls12::multi_miller_loop(&[(&left, &s_g2), (&right, &n_g2)])
+                    .final_exponentiation()
+                    .is_identity(),
+            )
+        }
+
         /// Per-k CPU-or-GPU proving benchmark (whichever backend this process is
-        /// configured for). Reports keygen / prove(median) / verify ms and proof size.
+        /// configured for). Reports keygen / prove(median) / verify ms and proof size,
+        /// and checks every proof on BLST.
         pub(super) fn run(label: &str, ks: &[u32], repeat: usize) {
             let _serial = super::SWEEP_LOCK
                 .lock()
@@ -250,30 +274,51 @@ macro_rules! ksweep_impl {
                     .expect("keygen_pk");
                 let keygen_ms = t.elapsed().as_secs_f64() * 1e3;
 
+                let prove = |rng: &mut ChaCha8Rng| {
+                    let circuit = DomainFillingCircuit { k, fill_ratio: 0.5 };
+                    let mut transcript = CircuitTranscript::<Blake2bState>::init();
+                    create_proof_kzg(&params, &pk, circuit, rng, &mut transcript)
+                        .expect("create_proof");
+                    transcript.finalize()
+                };
+                let prepare = |proof: &[u8]| {
+                    let mut vt = CircuitTranscript::<Blake2bState>::init_from_bytes(proof);
+                    prepare_plonk_proof::<_, KZGCommitmentScheme<Bls12>, _>(
+                        pk.get_vk(),
+                        &[&[]],
+                        &[&[]],
+                        &mut vt,
+                    )
+                    .expect("prepare")
+                };
+
+                // warm-up prove (untimed; uploads this params instance's GPU bases)
+                let mut made = Vec::with_capacity(repeat + 1);
+                made.push(prove(&mut rng));
+
                 // prove (repeat -> median)
                 let mut prove_times = Vec::with_capacity(repeat);
-                let mut proof = Vec::new();
                 for _ in 0..repeat {
-                    let circuit = DomainFillingCircuit { k, fill_ratio: 0.5 };
                     let t = Instant::now();
-                    let mut transcript = CircuitTranscript::<Blake2bState>::init();
-                    create_proof_kzg(&params, &pk, circuit, &mut rng, &mut transcript)
-                        .expect("create_proof");
-                    proof = transcript.finalize();
+                    let proof = prove(&mut rng);
                     prove_times.push(t.elapsed().as_secs_f64() * 1e3);
+                    made.push(proof);
                 }
                 let prove_ms = super::median(prove_times);
 
-                // verify (CPU/BLST pairing check of whatever backend produced the proof)
+                // every proof: BLST pairing check (untimed; independent of the GPU)
+                for (i, proof) in made.iter().enumerate() {
+                    assert!(
+                        verifies_on_blst(&params, &prepare(proof)),
+                        "proof {i} (0 = warm-up) failed the BLST pairing check at k={k}"
+                    );
+                }
+
+                // verify (the library verifier, on the last proof; its MSMs run on
+                // whichever backend this process is configured for)
+                let proof = made.last().expect("the warm-up proof");
                 let t = Instant::now();
-                let mut vt = CircuitTranscript::<Blake2bState>::init_from_bytes(&proof);
-                let guard = prepare_plonk_proof::<_, KZGCommitmentScheme<Bls12>, _>(
-                    pk.get_vk(),
-                    &[&[]],
-                    &[&[]],
-                    &mut vt,
-                )
-                .expect("prepare");
+                let guard = prepare(proof);
                 assert!(
                     guard.verify(&params.verifier_params()).is_ok(),
                     "proof failed to verify at k={k}"
@@ -307,6 +352,14 @@ mod v1 {
         }
         #[cfg(not(feature = "gpu"))]
         None
+    }
+
+    // 0.7.x: DualMSM::split yields (scalar, base) terms.
+    fn split_guard(
+        guard: &proofs::poly::kzg::msm::DualMSM<curves::Bls12>,
+    ) -> [(Vec<curves::Fq>, Vec<curves::G1Projective>); 2] {
+        let (left, right) = guard.split();
+        [left, right].map(|terms| terms.into_iter().map(|(s, b)| (*s, *b)).unzip())
     }
 
     // 0.7.x: create_proof(params, pk, circuits, nb_committed_instances, instances, rng, transcript).
@@ -353,6 +406,14 @@ mod v2 {
         }
         #[cfg(not(feature = "gpu-v2"))]
         None
+    }
+
+    // 0.8.x: DualMSM::split yields (label, scalar, base) terms.
+    fn split_guard(
+        guard: &proofs::poly::kzg::msm::DualMSM<curves::Bls12>,
+    ) -> [(Vec<curves::Fq>, Vec<curves::G1Projective>); 2] {
+        let (left, right) = guard.split();
+        [left, right].map(|terms| terms.into_iter().map(|(_, s, b)| (*s, *b)).unzip())
     }
 
     // 0.8.x: create_proof(params, pk, circuits, nb_committed_instances, instances, transcript, rng)
