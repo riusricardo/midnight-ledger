@@ -23,10 +23,15 @@
 //   ICICLE_BACKEND_INSTALL_DIR = ~/.local/icicle-backends/ours   (gpu arm)
 //   MIDNIGHT_GPU_STRICT = 1   (gpu arm: panic on any silent CPU fallback)
 // Unless MIDNIGHT_DEVICE=cpu, a sweep requires its line's GPU feature (`gpu` for the
-// 0.7.x sweep, `gpu-v2` for the 0.8.x one) and MIDNIGHT_GPU_STRICT=1, initializes that
-// line's backend before timing and panics if it did not come up, so a "gpu" table is
-// never CPU numbers. Under Auto it also prints the line's effective MSM / NTT size
-// thresholds, below which operations stay on CPU by design.
+// 0.7.x sweep, `gpu-v2` for the 0.8.x one) and MIDNIGHT_GPU_STRICT=1, initializes the
+// build's GPU backends before timing as the proof server does (zkir's
+// init_gpu_backend: every compiled-in line, each with its autotune calibration made
+// effective, measured and persisted first if none matches this machine) and panics if
+// its line did not come up, so a "gpu" table is never CPU numbers. It prints where the
+// line's GPU/CPU crossovers come from (calibrated, env-override, fallback or
+// disabled), so a table shows whether it ran calibrated, and under Auto also the
+// line's effective MSM / NTT size thresholds, below which operations stay on CPU by
+// design.
 // Each k proves once untimed first: the first prove on fresh params also uploads their
 // SRS bases to the GPU, a one-time cost the CPU arm does not have. Every proof, that
 // one included, then passes the KZG pairing check with both MSMs evaluated by BLST:
@@ -104,8 +109,8 @@ fn env_usize(key: &str, default: usize) -> usize {
 /// Circuit + per-k benchmark, expanded once per midnight-proofs line. Expects the
 /// expansion site to have `proofs` / `curves` in scope (the crate under test), a
 /// `create_proof_kzg` shim (the two lines order create_proof's trailing args differently),
-/// a `split_guard` shim (their `DualMSM::split` terms differ), `GPU_FEATURE` and
-/// `gpu_backend_info`.
+/// a `split_guard` shim (their `DualMSM::split` terms differ), `GPU_FEATURE`,
+/// `gpu_backend_info` and `line_init`.
 macro_rules! ksweep_impl {
     () => {
         use blake2b_simd::State as Blake2bState;
@@ -241,13 +246,17 @@ macro_rules! ksweep_impl {
                     "MIDNIGHT_DEVICE={device} needs MIDNIGHT_GPU_STRICT=1, so that a GPU \
                      operation that fails panics instead of silently running on CPU"
                 );
-                let warmup = proofs::init_gpu_backend();
-                assert!(
-                    warmup.is_some(),
-                    "the {label} GPU backend did not initialize; see the [GPU-FALLBACK] / \
-                     [GPU-WARN] line above"
-                );
+                let (status, calibration) = line_init(&zkir_v2::init_gpu_backend());
+                let zkir_v2::GpuLineStatus::Initialized(warmup) = status else {
+                    panic!(
+                        "the {label} GPU backend did not initialize ({status:?}); see the \
+                         [GPU-FALLBACK] / [GPU-WARN] line above"
+                    );
+                };
                 eprintln!("   gpu backend initialized (warm-up {warmup:?})");
+                if let Some(calibration) = calibration {
+                    eprintln!("   calibration: {calibration}");
+                }
                 if !super::gpu_device(&device) {
                     if let Some(info) = gpu_backend_info() {
                         eprintln!("   Auto: {info}");
@@ -342,6 +351,13 @@ mod v1 {
     /// The ledger feature that GPU-accelerates this line, and whether it is on.
     const GPU_FEATURE: (&str, bool) = ("gpu", cfg!(feature = "gpu"));
 
+    /// This line's start-up state and calibration in zkir's GPU init status.
+    fn line_init(
+        status: &zkir_v2::GpuInitStatus,
+    ) -> (zkir_v2::GpuLineStatus, Option<zkir_v2::GpuCalibration>) {
+        (status.v1, status.v1_calibration)
+    }
+
     /// This line's GPU backend, with the MSM / NTT size thresholds that route each
     /// operation under Auto (`None` without this line's GPU feature).
     fn gpu_backend_info() -> Option<String> {
@@ -395,6 +411,13 @@ mod v2 {
 
     /// The ledger feature that GPU-accelerates this line, and whether it is on.
     const GPU_FEATURE: (&str, bool) = ("gpu-v2", cfg!(feature = "gpu-v2"));
+
+    /// This line's start-up state and calibration in zkir's GPU init status.
+    fn line_init(
+        status: &zkir_v2::GpuInitStatus,
+    ) -> (zkir_v2::GpuLineStatus, Option<zkir_v2::GpuCalibration>) {
+        (status.v2, status.v2_calibration)
+    }
 
     /// This line's GPU backend, with the MSM / NTT size thresholds that route each
     /// operation under Auto (`None` without this line's GPU feature).

@@ -76,8 +76,13 @@
 // Backend selection is via environment:
 //   MIDNIGHT_DEVICE = cpu | gpu | (unset => Auto thresholds)
 //     gpu and Auto need a `--features gpu` build: the test initializes the backend
-//     before the warmup and panics unless the 0.7.x line came up. Auto also prints
-//     its effective MSM / NTT size thresholds (env or persisted calibration).
+//     before the warmup, as the proof server does, and panics unless the 0.7.x line
+//     came up. Initialization also makes the autotune calibration effective: it loads
+//     the one persisted for this machine, or measures and persists one first
+//     (MIDNIGHT_AUTOTUNE_CACHE relocates the file, MIDNIGHT_AUTOTUNE=0 skips it). gpu
+//     and Auto print where each line's GPU/CPU crossovers come from (calibrated,
+//     env-override, fallback or disabled), so a report shows whether it ran
+//     calibrated; Auto also prints the effective MSM / NTT size thresholds.
 //   ICICLE_BACKEND_INSTALL_DIR = dir with our compiled CUDA .so (gpu/Auto)
 //   MIDNIGHT_GPU_STRICT = 1  => panic on any GPU->CPU failure fallback. Required for
 //     gpu and Auto: without it a failed GPU op silently runs on CPU.
@@ -707,6 +712,13 @@ async fn real_tx_prove_bench() {
              [GPU-FALLBACK] / [GPU-WARN] line above",
             status.v1
         );
+        // Auto routes each operation by these crossovers; under gpu the MSM window
+        // still follows the calibration.
+        for (line, _, calibration) in status.lines_with_calibration() {
+            if let Some(calibration) = calibration {
+                eprintln!("  [gpu] calibration, {line}: {calibration}");
+            }
+        }
         // Auto keeps operations below these sizes on CPU (by design, not a fallback).
         if !gpu_device(&device) {
             #[cfg(feature = "gpu")]
