@@ -83,9 +83,13 @@ hex = "^0.4.3"
 # prover seam (midnight_proofs::plonk::create_proof) on synthetic circuits.
 # Naming follows zkir: unsuffixed = current (0.8.x) stack, `-v1` = 0.7.x. Both
 # lines are redirected to the GPU forks via the workspace [patch.crates-io].
-midnight-proofs-v1 = { package = "midnight-proofs", version = "0.7" }
+# `deterministic-lookups` (fork feature) makes proof bytes reproducible for a
+# seeded rng, so gpu_benchmark can gate GPU proofs byte-for-byte against CPU
+# proofs. As a dev-dependency feature it reaches test builds only; the library
+# and the proof server keep upstream's (randomly ordered) lookup filling.
+midnight-proofs-v1 = { package = "midnight-proofs", version = "0.7", features = ["deterministic-lookups"] }
 midnight-curves-v1 = { package = "midnight-curves", version = "0.2" }
-midnight-proofs = "0.8"
+midnight-proofs = { version = "0.8", features = ["deterministic-lookups"] }
 midnight-curves = "0.3"
 blake2b_simd = "1"
 rand_chacha = "0.3"
