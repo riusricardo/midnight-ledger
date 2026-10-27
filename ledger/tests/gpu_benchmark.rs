@@ -54,8 +54,14 @@
 // whether its prover is deterministic, and BENCH_EXPECT then requires:
 //   - both runs deterministic: every sealed tx identical, byte for byte;
 //   - otherwise: every sealed tx identical with its proofs erased, and the same
-//     proofs (circuit, length) in the same order; the proof bytes themselves are
-//     covered by verification, and each proof's first differing byte is reported.
+//     proofs (circuit, length) in the same order; each proof's first differing byte
+//     is reported.
+// BENCH_EXPECT also puts every transaction of the dumped run through the
+// well-formedness check again, in this process. A GPU run cannot check its own proofs
+// independently: under MIDNIGHT_DEVICE=gpu the verifier's MSMs run on the GPU too, so
+// a GPU MSM that returned a wrong result without failing could make proofs that the
+// same run's verification accepts. Running the GPU arm first and the CPU arm against
+// its dump therefore checks every GPU proof with the CPU (BLST) verifier.
 //
 // Backend selection is via environment:
 //   MIDNIGHT_DEVICE = cpu | gpu | (unset => Auto thresholds)
@@ -69,8 +75,9 @@
 //   BENCH_WARMUP       (default 1)      untimed warmup proves (seeds BENCH_SEED-1, -2, ...)
 //   BENCH_PARAMS_CACHE (default 1)      0 => reload SRS params for every proof job
 //   BENCH_DUMP         (optional path)  write every timed tx and its proofs here
-//   BENCH_EXPECT       (optional path)  compare with another run's BENCH_DUMP; panics
-//                                       on mismatch (see Byte-exactness)
+//   BENCH_EXPECT       (optional path)  compare with another run's BENCH_DUMP and check
+//                                       its transactions here; panics on mismatch or
+//                                       rejection (see Byte-exactness)
 //
 // Key material: zswap/10/{spend,output}.{prover,verifier,bzkir}, dust/10/spend.* and
 // bls_midnight_2p{k} are resolved by the data provider from $MIDNIGHT_PP (else
@@ -78,13 +85,14 @@
 // from $MIDNIGHT_PARAM_SOURCE (default https://srs.midnight.network/) when missing.
 //
 // Run both arms from one `gpu` build (two processes: the backend config is frozen per
-// process), CPU first, then the GPU arm against the CPU dump:
+// process), the GPU arm first, then the CPU arm against the GPU dump, which verifies
+// the GPU proofs on CPU (see Byte-exactness):
 //   export MIDNIGHT_LEDGER_TEST_STATIC_DIR="" MIDNIGHT_GPU_STRICT=1 \
 //     ICICLE_BACKEND_INSTALL_DIR=~/.local/icicle-backends/ours
-//   MIDNIGHT_DEVICE=cpu BENCH_DUMP=/tmp/cpu.bin \
+//   MIDNIGHT_DEVICE=gpu BENCH_DUMP=/tmp/gpu.bin \
 //     cargo test --release -p midnight-ledger-v9 --features proving,test-utilities,gpu \
 //     --test gpu_benchmark -- --nocapture --exact real_tx_prove_bench
-//   MIDNIGHT_DEVICE=gpu BENCH_EXPECT=/tmp/cpu.bin \
+//   MIDNIGHT_DEVICE=cpu BENCH_EXPECT=/tmp/gpu.bin \
 //     cargo test --release -p midnight-ledger-v9 --features proving,test-utilities,gpu \
 //     --test gpu_benchmark -- --nocapture --exact real_tx_prove_bench
 // (Running the test binary directly also needs
@@ -242,13 +250,19 @@ async fn funded_state(seed: u64) -> (TestState<InMemoryDB>, StdRng) {
 /// `state`: zswap and dust proofs verified with the built-in verifier keys, the
 /// binding, signatures and limits. Everything but the fee balance, which
 /// `TestState::balance_tx` sizes from its estimate for the unproven, unsealed tx;
-/// the sealed tx costs a little more (see [`dust_fee_balance`]).
-fn assert_well_formed(state: &TestState<InMemoryDB>, tx: &SealedTx, seed: u64) {
+/// the sealed tx costs a little more (see [`dust_fee_balance`]). `what` names the
+/// tx in the panic message.
+fn assert_well_formed(state: &TestState<InMemoryDB>, tx: &SealedTx, what: std::fmt::Arguments) {
     let mut strictness = WellFormedStrictness::default();
     strictness.enforce_balancing = false;
     if let Err(e) = tx.well_formed(&state.ledger, strictness, state.time) {
-        panic!("seed {seed}: the sealed transaction is not well-formed: {e}");
+        panic!("{what}: the sealed transaction is not well-formed: {e}");
     }
+}
+
+/// Whether `MIDNIGHT_DEVICE` selects the CPU, parsed as the GPU backend does.
+fn cpu_device(device: &str) -> bool {
+    matches!(device.to_lowercase().as_str(), "cpu" | "blst")
 }
 
 /// The sealed tx's Dust balance after its own fee: what it pays minus what it
@@ -349,14 +363,14 @@ async fn prove_tx(seed: u64) -> Proven {
 
     let sealed: SealedTx = proven.seal(rng.split());
     if !PROVER_SELF_VERIFIES {
-        assert_well_formed(&state, &sealed, seed);
+        assert_well_formed(&state, &sealed, format_args!("seed {seed}"));
     }
     let mut tx_bytes = Vec::new();
     serialize::tagged_serialize(&sealed, &mut tx_bytes).expect("serialize tx");
     let parity_ms = ms_since(t_parity);
 
     if PROVER_SELF_VERIFIES {
-        assert_well_formed(&state, &sealed, seed);
+        assert_well_formed(&state, &sealed, format_args!("seed {seed}"));
     }
     let fee_balance = dust_fee_balance(&state, &sealed);
     let mut erased = Vec::new();
@@ -516,8 +530,9 @@ fn first_difference(a: &[u8], b: &[u8]) -> Option<usize> {
 }
 
 /// Compares this run against another run's dump; panics on any mismatch the two
-/// runs' provers do not explain (see the header).
-fn check_expected(path: &str, deterministic: bool, runs: &[Proven]) {
+/// runs' provers do not explain (see the header), or unless every dumped tx is
+/// well-formed here. `cpu_verifier`: this process verifies with the CPU (BLST).
+async fn check_expected(path: &str, deterministic: bool, runs: &[Proven], cpu_verifier: bool) {
     let (expected_deterministic, expected) = read_dump(path);
     let exact_required = deterministic && expected_deterministic;
     assert_eq!(
@@ -531,6 +546,12 @@ fn check_expected(path: &str, deterministic: bool, runs: &[Proven]) {
     for (want, got) in expected.iter().zip(runs) {
         let seed = got.seed;
         assert_eq!(want.seed, seed, "BENCH_EXPECT {path}: seed mismatch");
+        // The funded state is a function of the seed, so the dumped tx is checked
+        // against the state it was built on.
+        let (state, _) = funded_state(seed).await;
+        let tx: SealedTx = serialize::tagged_deserialize(&mut &want.tx[..])
+            .unwrap_or_else(|e| panic!("BENCH_EXPECT {path}: seed {seed}: bad tx: {e}"));
+        assert_well_formed(&state, &tx, format_args!("seed {seed} of {path}"));
         if want.tx == got.tx {
             exact += 1;
             eprintln!(
@@ -582,7 +603,19 @@ fn check_expected(path: &str, deterministic: bool, runs: &[Proven]) {
     if exact < runs.len() {
         eprintln!(
             "   the others are identical except for proof bytes, which a non-deterministic \
-             prover does not reproduce; every proof passed verification"
+             prover does not reproduce"
+        );
+    }
+    if cpu_verifier {
+        eprintln!(
+            "   all {} dumped transactions are well-formed with the CPU (BLST) verifier",
+            expected.len()
+        );
+    } else {
+        eprintln!(
+            "   all {} dumped transactions are well-formed here, but this process verifies \
+             on the GPU: run the CPU arm against a GPU dump for an independent check",
+            expected.len()
         );
     }
 }
@@ -610,7 +643,7 @@ async fn real_tx_prove_bench() {
 
     // A GPU (or Auto) arm must actually be able to use the GPU: without the feature no
     // backend is linked and every op silently runs on CPU, even under strict mode.
-    if !matches!(device.to_lowercase().as_str(), "cpu" | "blst") {
+    if !cpu_device(&device) {
         assert!(
             cfg!(feature = "gpu"),
             "MIDNIGHT_DEVICE={device} needs a GPU build: add --features gpu \
@@ -714,7 +747,9 @@ async fn real_tx_prove_bench() {
         write_dump(path, deterministic, &runs);
     }
     if let Some(path) = &expect {
-        check_expected(path, deterministic, &runs);
+        // Without `gpu` every op runs on the CPU, whatever MIDNIGHT_DEVICE says.
+        let cpu_verifier = !cfg!(feature = "gpu") || cpu_device(&device);
+        check_expected(path, deterministic, &runs, cpu_verifier).await;
     }
 }
 
