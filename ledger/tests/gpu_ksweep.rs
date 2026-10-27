@@ -23,8 +23,10 @@
 //   ICICLE_BACKEND_INSTALL_DIR = ~/.local/icicle-backends/ours   (gpu arm)
 //   MIDNIGHT_GPU_STRICT = 1   (gpu arm: panic on any silent CPU fallback)
 // Unless MIDNIGHT_DEVICE=cpu, a sweep requires its line's GPU feature (`gpu` for the
-// 0.7.x sweep, `gpu-v2` for the 0.8.x one), initializes that line's backend before
-// timing and panics if it did not come up, so a "gpu" table is never CPU numbers.
+// 0.7.x sweep, `gpu-v2` for the 0.8.x one) and MIDNIGHT_GPU_STRICT=1, initializes that
+// line's backend before timing and panics if it did not come up, so a "gpu" table is
+// never CPU numbers. Under Auto it also prints the line's effective MSM / NTT size
+// thresholds, below which operations stay on CPU by design.
 // Tunables:
 //   KSWEEP_KS      (default "14,15,16,17,18,19")
 //   KSWEEP_REPEAT  (default 3)   timed proves per k; the MEDIAN is reported
@@ -72,6 +74,21 @@ fn env_list_u32(key: &str, default: &[u32]) -> Vec<u32> {
         .unwrap_or_else(|| default.to_vec())
 }
 
+/// Whether `MIDNIGHT_DEVICE` selects the CPU, parsed as the GPU backend does.
+fn cpu_device(device: &str) -> bool {
+    matches!(device.to_lowercase().as_str(), "cpu" | "blst")
+}
+
+/// Whether `MIDNIGHT_DEVICE` forces the GPU (anything else but the CPU is Auto).
+fn gpu_device(device: &str) -> bool {
+    matches!(device.to_lowercase().as_str(), "gpu" | "cuda")
+}
+
+/// Whether `MIDNIGHT_GPU_STRICT` is on, parsed as the GPU backend does.
+fn strict_mode(strict: &str) -> bool {
+    matches!(strict.to_lowercase().as_str(), "1" | "true" | "yes" | "on")
+}
+
 fn env_usize(key: &str, default: usize) -> usize {
     std::env::var(key)
         .ok()
@@ -81,8 +98,8 @@ fn env_usize(key: &str, default: usize) -> usize {
 
 /// Circuit + per-k benchmark, expanded once per midnight-proofs line. Expects the
 /// expansion site to have `proofs` / `curves` in scope (the crate under test), a
-/// `create_proof_kzg` shim (the two lines order create_proof's trailing args differently)
-/// and `GPU_FEATURE`.
+/// `create_proof_kzg` shim (the two lines order create_proof's trailing args differently),
+/// `GPU_FEATURE` and `gpu_backend_info`.
 macro_rules! ksweep_impl {
     () => {
         use blake2b_simd::State as Blake2bState;
@@ -186,12 +203,19 @@ macro_rules! ksweep_impl {
                 "== gpu_ksweep_bench [{label}] :: device={device} strict={strict} repeat={repeat} =="
             );
             eprintln!("   backend_dir={backend}");
-            if !matches!(device.to_lowercase().as_str(), "cpu" | "blst") {
+            if !super::cpu_device(&device) {
                 assert!(
                     GPU_FEATURE.1,
                     "MIDNIGHT_DEVICE={device} needs this line's GPU build: add --features {} \
                      (or set MIDNIGHT_DEVICE=cpu for a CPU sweep)",
                     GPU_FEATURE.0
+                );
+                // Without strict mode a GPU op that fails is redone on CPU with only a
+                // [GPU-FALLBACK] line on stderr, and the table would still say gpu.
+                assert!(
+                    super::strict_mode(&strict),
+                    "MIDNIGHT_DEVICE={device} needs MIDNIGHT_GPU_STRICT=1, so that a GPU \
+                     operation that fails panics instead of silently running on CPU"
                 );
                 let warmup = proofs::init_gpu_backend();
                 assert!(
@@ -200,6 +224,11 @@ macro_rules! ksweep_impl {
                      [GPU-WARN] line above"
                 );
                 eprintln!("   gpu backend initialized (warm-up {warmup:?})");
+                if !super::gpu_device(&device) {
+                    if let Some(info) = gpu_backend_info() {
+                        eprintln!("   Auto: {info}");
+                    }
+                }
             }
             eprintln!(
                 "{:>4} {:>11} {:>13} {:>11} {:>10}",
@@ -268,6 +297,18 @@ mod v1 {
     /// The ledger feature that GPU-accelerates this line, and whether it is on.
     const GPU_FEATURE: (&str, bool) = ("gpu", cfg!(feature = "gpu"));
 
+    /// This line's GPU backend, with the MSM / NTT size thresholds that route each
+    /// operation under Auto (`None` without this line's GPU feature).
+    fn gpu_backend_info() -> Option<String> {
+        #[cfg(feature = "gpu")]
+        {
+            use proofs::gpu_accel::GpuAccelerator;
+            Some(proofs::gpu_accel::global_accelerator().backend_info())
+        }
+        #[cfg(not(feature = "gpu"))]
+        None
+    }
+
     // 0.7.x: create_proof(params, pk, circuits, nb_committed_instances, instances, rng, transcript).
     // committed-instances is always ON in the ledger build, so the `0` is unconditional.
     fn create_proof_kzg(
@@ -301,6 +342,18 @@ mod v2 {
 
     /// The ledger feature that GPU-accelerates this line, and whether it is on.
     const GPU_FEATURE: (&str, bool) = ("gpu-v2", cfg!(feature = "gpu-v2"));
+
+    /// This line's GPU backend, with the MSM / NTT size thresholds that route each
+    /// operation under Auto (`None` without this line's GPU feature).
+    fn gpu_backend_info() -> Option<String> {
+        #[cfg(feature = "gpu-v2")]
+        {
+            use proofs::gpu_accel::GpuAccelerator;
+            Some(proofs::gpu_accel::global_accelerator().backend_info())
+        }
+        #[cfg(not(feature = "gpu-v2"))]
+        None
+    }
 
     // 0.8.x: create_proof(params, pk, circuits, nb_committed_instances, instances, transcript, rng)
     // -- the transcript and rng arguments swapped places relative to 0.7.x.

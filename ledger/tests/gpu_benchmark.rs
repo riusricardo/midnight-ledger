@@ -66,9 +66,11 @@
 // Backend selection is via environment:
 //   MIDNIGHT_DEVICE = cpu | gpu | (unset => Auto thresholds)
 //     gpu and Auto need a `--features gpu` build: the test initializes the backend
-//     before the warmup and panics unless the 0.7.x line came up.
+//     before the warmup and panics unless the 0.7.x line came up. Auto also prints
+//     its effective MSM / NTT size thresholds (env or persisted calibration).
 //   ICICLE_BACKEND_INSTALL_DIR = dir with our compiled CUDA .so (gpu/Auto)
-//   MIDNIGHT_GPU_STRICT = 1  => panic on any GPU->CPU failure fallback.
+//   MIDNIGHT_GPU_STRICT = 1  => panic on any GPU->CPU failure fallback. Required for
+//     gpu and Auto: without it a failed GPU op silently runs on CPU.
 // Tunables:
 //   BENCH_SEED         (default 24302)  first timed seed; the warmup uses BENCH_SEED-1
 //   BENCH_REPEAT       (default 5)      timed iterations
@@ -263,6 +265,24 @@ fn assert_well_formed(state: &TestState<InMemoryDB>, tx: &SealedTx, what: std::f
 /// Whether `MIDNIGHT_DEVICE` selects the CPU, parsed as the GPU backend does.
 fn cpu_device(device: &str) -> bool {
     matches!(device.to_lowercase().as_str(), "cpu" | "blst")
+}
+
+/// Whether `MIDNIGHT_DEVICE` forces the GPU (anything else but the CPU is Auto).
+fn gpu_device(device: &str) -> bool {
+    matches!(device.to_lowercase().as_str(), "gpu" | "cuda")
+}
+
+/// Whether `MIDNIGHT_GPU_STRICT` is on, parsed as the GPU backend does.
+fn strict_mode(strict: &str) -> bool {
+    matches!(strict.to_lowercase().as_str(), "1" | "true" | "yes" | "on")
+}
+
+/// The 0.7.x line's GPU backend, with the MSM / NTT size thresholds that route
+/// each operation under Auto.
+#[cfg(feature = "gpu")]
+fn gpu_backend_info() -> String {
+    use midnight_proofs_v1::gpu_accel::GpuAccelerator;
+    midnight_proofs_v1::gpu_accel::global_accelerator().backend_info()
 }
 
 /// The sealed tx's Dust balance after its own fee: what it pays minus what it
@@ -649,6 +669,13 @@ async fn real_tx_prove_bench() {
             "MIDNIGHT_DEVICE={device} needs a GPU build: add --features gpu \
              (or set MIDNIGHT_DEVICE=cpu for the CPU arm)"
         );
+        // Without strict mode a GPU op that fails is redone on CPU with only a
+        // [GPU-FALLBACK] line on stderr, and the arm would still report GPU numbers.
+        assert!(
+            strict_mode(&strict),
+            "MIDNIGHT_DEVICE={device} needs MIDNIGHT_GPU_STRICT=1, so that a GPU operation \
+             that fails panics instead of silently running on CPU"
+        );
         let status = zkir_v2::init_gpu_backend();
         eprintln!("  [gpu] init: {status:?}");
         assert!(
@@ -657,6 +684,11 @@ async fn real_tx_prove_bench() {
              [GPU-FALLBACK] / [GPU-WARN] line above",
             status.v1
         );
+        // Auto keeps operations below these sizes on CPU (by design, not a fallback).
+        if !gpu_device(&device) {
+            #[cfg(feature = "gpu")]
+            eprintln!("  [gpu] Auto: {}", gpu_backend_info());
+        }
     }
 
     // ---- warmup (UNTIMED): params, converted params + GPU bases, PK_CACHE, verifier ----
