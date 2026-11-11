@@ -83,20 +83,20 @@ midnight-transient-crypto = { path = "transient-crypto" }
 # these same two curves patches, so one backend package serves both lines; it
 # needs no entry. Both forks are branches of riusricardo/midnight-zk; Cargo.lock
 # pins the commit of each branch (and of the backend):
-#   v1 line (0.7.x / 0.2.x): branch ledger9-hardening -- legacy zkir pipeline
+#   v1 line (0.7.x / 0.2.x): branch gpu/proofs-0.7 -- legacy zkir pipeline
 #     (IR V0/V1): Zswap spend/output/sign, Dust spend, compactc's default zkir
 #     2.0. Not the fork's `main`: that lacks the CPU fallbacks this ledger relies
 #     on (GpuLineStatus::Failed, the proof server's start-up warning), so a batch
 #     commit there panics where the GPU is unusable.
-midnight-proofs = { git = "https://github.com/riusricardo/midnight-zk", branch = "ledger9-hardening" }
-midnight-curves = { git = "https://github.com/riusricardo/midnight-zk", branch = "ledger9-hardening" }
-#   v2 line (0.8.x / 0.3.x): branch port/proofs-0.8.2 -- current pipeline (IR V2+,
+midnight-proofs = { git = "https://github.com/riusricardo/midnight-zk", branch = "gpu/proofs-0.7" }
+midnight-curves = { git = "https://github.com/riusricardo/midnight-zk", branch = "gpu/proofs-0.7" }
+#   v2 line (0.8.x / 0.3.x): branch gpu/proofs-0.8 -- current pipeline (IR V2+,
 #     zkir 2.2) and zkir-v3. Must stay >= 0.8.2 / 0.3.1: the in-tree crates
 #     require midnight-proofs ^0.8.2, and a lower version leaves the patch silently
 #     unused. Must also stay 0.8.x / 0.3.x (circuits 7.3.0 and zk-stdlib 2.4.0 ask
 #     for ^0.8.0 / ^0.3.0).
-midnight-proofs-v2 = { git = "https://github.com/riusricardo/midnight-zk", branch = "port/proofs-0.8.2", package = "midnight-proofs" }
-midnight-curves-v2 = { git = "https://github.com/riusricardo/midnight-zk", branch = "port/proofs-0.8.2", package = "midnight-curves" }
+midnight-proofs-v2 = { git = "https://github.com/riusricardo/midnight-zk", branch = "gpu/proofs-0.8", package = "midnight-proofs" }
+midnight-curves-v2 = { git = "https://github.com/riusricardo/midnight-zk", branch = "gpu/proofs-0.8", package = "midnight-curves" }
 
 [workspace.metadata.spellcheck]
 config = ".spellcheck/cargo-spellcheck.toml"
