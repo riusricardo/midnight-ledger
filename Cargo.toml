@@ -78,24 +78,25 @@ midnight-transient-crypto = { path = "transient-crypto" }
 # midnight-circuits 6.3/7.3, midnight-zk-stdlib 1.3/2.4, blake2b_halo2,
 # sha3-circuit, transient-crypto-old (2.2), midnight-zkir 3.2 (git) -- then
 # links the patched crate, so circuits/zk-stdlib need no patch of their own.
-# The forks' one CUDA backend (midnight-bls12-381-cuda, a path sibling both
-# forks name) takes midnight-curves 0.2.1 and 0.3.1 through these same two
-# curves patches, so one backend package serves both lines; it needs no entry.
-# Both forks are expected as siblings of this checkout:
-#   v1 line (0.7.x / 0.2.x): midnight-zk-gpu (branch ledger9-hardening) -- legacy
-#     zkir pipeline (IR V0/V1): Zswap spend/output/sign, Dust spend, compactc's
-#     default zkir 2.0. Not its `main`: that lacks the CPU fallbacks this ledger
-#     relies on (GpuLineStatus::Failed, the proof server's start-up warning), so a
-#     batch commit there panics where the GPU is unusable.
-midnight-proofs = { path = "../midnight-zk-gpu/proofs" }
-midnight-curves = { path = "../midnight-zk-gpu/curves" }
-#   v2 line (0.8.x / 0.3.x): midnight-zk-gpu-v2 (branch port/proofs-0.8.2) -- current
-#     pipeline (IR V2+, zkir 2.2) and zkir-v3. Must stay >= 0.8.2 / 0.3.1: the
-#     in-tree crates require midnight-proofs ^0.8.2, and a lower version leaves the
-#     patch silently unused. Must also stay 0.8.x / 0.3.x (circuits 7.3.0 and
-#     zk-stdlib 2.4.0 ask for ^0.8.0 / ^0.3.0).
-midnight-proofs-v2 = { path = "../midnight-zk-gpu-v2/proofs", package = "midnight-proofs" }
-midnight-curves-v2 = { path = "../midnight-zk-gpu-v2/curves", package = "midnight-curves" }
+# The forks' one CUDA backend (riusricardo/midnight-bls12-381-cuda, which both
+# forks name by the same git spec) takes midnight-curves 0.2.1 and 0.3.1 through
+# these same two curves patches, so one backend package serves both lines; it
+# needs no entry. Both forks are branches of riusricardo/midnight-zk; Cargo.lock
+# pins the commit of each branch (and of the backend):
+#   v1 line (0.7.x / 0.2.x): branch ledger9-hardening -- legacy zkir pipeline
+#     (IR V0/V1): Zswap spend/output/sign, Dust spend, compactc's default zkir
+#     2.0. Not the fork's `main`: that lacks the CPU fallbacks this ledger relies
+#     on (GpuLineStatus::Failed, the proof server's start-up warning), so a batch
+#     commit there panics where the GPU is unusable.
+midnight-proofs = { git = "https://github.com/riusricardo/midnight-zk", branch = "ledger9-hardening" }
+midnight-curves = { git = "https://github.com/riusricardo/midnight-zk", branch = "ledger9-hardening" }
+#   v2 line (0.8.x / 0.3.x): branch port/proofs-0.8.2 -- current pipeline (IR V2+,
+#     zkir 2.2) and zkir-v3. Must stay >= 0.8.2 / 0.3.1: the in-tree crates
+#     require midnight-proofs ^0.8.2, and a lower version leaves the patch silently
+#     unused. Must also stay 0.8.x / 0.3.x (circuits 7.3.0 and zk-stdlib 2.4.0 ask
+#     for ^0.8.0 / ^0.3.0).
+midnight-proofs-v2 = { git = "https://github.com/riusricardo/midnight-zk", branch = "port/proofs-0.8.2", package = "midnight-proofs" }
+midnight-curves-v2 = { git = "https://github.com/riusricardo/midnight-zk", branch = "port/proofs-0.8.2", package = "midnight-curves" }
 
 [workspace.metadata.spellcheck]
 config = ".spellcheck/cargo-spellcheck.toml"

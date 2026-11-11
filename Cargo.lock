@@ -3186,6 +3186,7 @@ dependencies = [
 [[package]]
 name = "midnight-bls12-381-cuda"
 version = "0.3.0"
+source = "git+https://github.com/riusricardo/midnight-bls12-381-cuda?branch=main#d4f7ed75a41edcac6793e865657f433382c97052"
 dependencies = [
  "ff 0.13.1",
  "group 0.13.0",
@@ -3270,6 +3271,7 @@ dependencies = [
 [[package]]
 name = "midnight-curves"
 version = "0.2.1"
+source = "git+https://github.com/riusricardo/midnight-zk?branch=ledger9-hardening#23017c1617007dbac894757cf5e87e2d970158c7"
 dependencies = [
  "bitvec",
  "blst",
@@ -3295,6 +3297,7 @@ dependencies = [
 [[package]]
 name = "midnight-curves"
 version = "0.3.1"
+source = "git+https://github.com/riusricardo/midnight-zk?branch=port%2Fproofs-0.8.2#4d52f159259e1a67d97159517d8f8b065f7943ab"
 dependencies = [
  "bitvec",
  "blst",
@@ -3553,6 +3556,7 @@ dependencies = [
 [[package]]
 name = "midnight-proofs"
 version = "0.7.3"
+source = "git+https://github.com/riusricardo/midnight-zk?branch=ledger9-hardening#23017c1617007dbac894757cf5e87e2d970158c7"
 dependencies = [
  "blake2b_simd",
  "ff 0.13.1",
@@ -3575,6 +3579,7 @@ dependencies = [
 [[package]]
 name = "midnight-proofs"
 version = "0.8.2"
+source = "git+https://github.com/riusricardo/midnight-zk?branch=port%2Fproofs-0.8.2#4d52f159259e1a67d97159517d8f8b065f7943ab"
 dependencies = [
  "blake2b_simd",
  "ff 0.13.1",
