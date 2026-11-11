@@ -863,7 +863,7 @@ fn builtin_circuit_inventory() {
             }
         );
         // Ledger 9 ships every built-in circuit as legacy IR; if this ever changes,
-        // the GPU benchmark needs the 0.8.x fork too (zkir feature `gpu-v2`).
+        // the benchmark's per-job routing report must cover the 0.8.x line too.
         assert!(legacy, "{key} is no longer on the legacy (0.7.x) pipeline");
     }
 }

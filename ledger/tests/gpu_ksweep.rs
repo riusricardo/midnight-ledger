@@ -16,14 +16,15 @@
 //   gpu_ksweep_bench_v2  midnight-proofs 0.8.x (dev-dep `midnight-proofs`): the current
 //                        pipeline that proves Compact contract circuits (IR V2 / zkir v3).
 // Both lines are redirected by the workspace [patch.crates-io]; each is GPU-accelerated
-// only if its fork has the `gpu` feature enabled (zkir `gpu-v1` / `gpu-v2`).
+// only if its fork has the `gpu` feature enabled (zkir `gpu-v1` / `gpu-v2`; the
+// ledger's `gpu` enables both).
 //
 // Backend is chosen per-process (config is OnceLock-frozen), same as the real-tx bench:
 //   MIDNIGHT_DEVICE   = cpu | gpu | (unset => Auto thresholds)
 //   ICICLE_BACKEND_INSTALL_DIR = ~/.local/icicle-backends/ours   (gpu arm)
 //   MIDNIGHT_GPU_STRICT = 1   (gpu arm: panic on any silent CPU fallback)
-// Unless MIDNIGHT_DEVICE=cpu, a sweep requires its line's GPU feature (`gpu` for the
-// 0.7.x sweep, `gpu-v2` for the 0.8.x one) and MIDNIGHT_GPU_STRICT=1, initializes the
+// Unless MIDNIGHT_DEVICE=cpu, a sweep requires the ledger's `gpu` feature (both
+// lines) and MIDNIGHT_GPU_STRICT=1, initializes the
 // build's GPU backends before timing as the proof server does (zkir's
 // init_gpu_backend: every compiled-in line, each with its autotune calibration made
 // effective, measured and persisted first if none matches this machine) and panics if
@@ -51,7 +52,7 @@
 //   cargo test --release -p midnight-ledger-v9 --features proving,test-utilities,gpu \
 //     --test gpu_ksweep -- --ignored --nocapture --exact gpu_ksweep_bench
 //   # 0.8.x (contract) line:
-//   cargo test --release -p midnight-ledger-v9 --features proving,test-utilities,gpu-v2 \
+//   cargo test --release -p midnight-ledger-v9 --features proving,test-utilities,gpu \
 //     --test gpu_ksweep -- --ignored --nocapture --exact gpu_ksweep_bench_v2
 // (Running the test binary directly also needs
 //  LD_LIBRARY_PATH=$PWD/target/release/deps/icicle/lib.)
@@ -410,7 +411,7 @@ mod v2 {
     use midnight_proofs as proofs;
 
     /// The ledger feature that GPU-accelerates this line, and whether it is on.
-    const GPU_FEATURE: (&str, bool) = ("gpu-v2", cfg!(feature = "gpu-v2"));
+    const GPU_FEATURE: (&str, bool) = ("gpu", cfg!(feature = "gpu"));
 
     /// This line's start-up state and calibration in zkir's GPU init status.
     fn line_init(
@@ -422,12 +423,12 @@ mod v2 {
     /// This line's GPU backend, with the MSM / NTT size thresholds that route each
     /// operation under Auto (`None` without this line's GPU feature).
     fn gpu_backend_info() -> Option<String> {
-        #[cfg(feature = "gpu-v2")]
+        #[cfg(feature = "gpu")]
         {
             use proofs::gpu_accel::GpuAccelerator;
             Some(proofs::gpu_accel::global_accelerator().backend_info())
         }
-        #[cfg(not(feature = "gpu-v2"))]
+        #[cfg(not(feature = "gpu"))]
         None
     }
 

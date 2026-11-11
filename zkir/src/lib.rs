@@ -378,7 +378,7 @@ fn cpu_device_selected() -> bool {
 /// (`MIDNIGHT_AUTOTUNE_CACHE`, an absolute path, else `autotune-v1.conf` in
 /// `$XDG_CACHE_HOME/midnight-gpu` or `~/.cache/midnight-gpu`), so this reaches
 /// the command through the 0.7.x line's fork (the 0.8.x line's in a build with
-/// `gpu-v2` alone); it is the same command either way. In a build without
+/// zkir's `gpu-v2` alone); it is the same command either way. In a build without
 /// either it prints why to stderr and returns 2, as for a missing GPU.
 pub fn autotune_cli<I, S>(program: &str, args: I) -> u8
 where

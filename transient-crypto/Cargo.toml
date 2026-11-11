@@ -20,7 +20,7 @@ mock-verify = []
 public-internal-structure = []
 test-utilities = []
 # GPU acceleration of the 0.8.x (current) prover; requires the patched 0.8.x
-# GPU fork (see the workspace [patch.crates-io] and zkir's `gpu-v2`).
+# GPU fork (see the workspace [patch.crates-io] and zkir's `gpu`).
 gpu = ["midnight-proofs/gpu"]
 
 [dependencies]

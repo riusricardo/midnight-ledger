@@ -32,20 +32,20 @@
 //     line's GPU `commit` / `commit_lagrange` equals its BLST commitment byte
 //     for byte.
 //
-// Needs the GPU and both lines' GPU features (`gpu-v2` implies `gpu`), forced
+// Needs the GPU and the ledger's `gpu` feature (both lines), forced
 // to the GPU under strict mode so that every MSM and NTT is a GPU launch (what
 // the counters count) and a failing one panics instead of running on the CPU.
 // From midnight-ledger-v9/:
 //   export MIDNIGHT_DEVICE=gpu MIDNIGHT_GPU_STRICT=1 \
 //     ICICLE_BACKEND_INSTALL_DIR=~/.local/icicle-backends/ours
-//   cargo test --release -p midnight-ledger-v9 --features gpu-v2 \
+//   cargo test --release -p midnight-ledger-v9 --features gpu \
 //     --test gpu_dual_line -- --test-threads=1 --nocapture
 // (Running the test binary directly also needs
 //  LD_LIBRARY_PATH=$PWD/target/release/deps/icicle/lib.) The counters are
 // process-wide, so run with --test-threads=1: the GPU test must be the only
 // GPU work in the process. MIDNIGHT_AUTOTUNE_CACHE relocates the calibration
 // file (a fresh one is measured on the first run and read on the next).
-#![cfg(feature = "gpu-v2")]
+#![cfg(feature = "gpu")]
 
 use std::any::TypeId;
 

@@ -19,16 +19,18 @@ mock-verify = ["transient-crypto-old/mock-verify", "transient-crypto/mock-verify
 # this is where `gpu` reaches both pipelines. Cargo unifies features per crate
 # node, so enabling a line here GPU-accelerates every user of that line in the
 # build (transient-crypto-old, zk-stdlib, the external zkir-v3, ...).
+# `gpu` enables both lines, so every circuit a proof server receives (built-in,
+# compactc's zkir 2.0, zkir 2.2 and zkir-v3) proves on the GPU; the per-line
+# features exist for builds that need only one:
 #   gpu-v1: midnight-proofs 0.7.x -- IR V0/V1 (legacy) pipeline: the built-in
 #           Zswap spend/output/sign and Dust spend circuits, and contracts in
 #           compactc's default zkir 2.0 form.
 #   gpu-v2: midnight-proofs 0.8.x -- IR V2+ (zkir 2.2) and zkir-v3 circuits.
-#           Opt-in, not part of `gpu` for now. Both lines link ONE instance of
-#           the CUDA backend crate (midnight-bls12-381-cuda, `links`-guarded),
-#           so a process proving on both lines loads the backend, builds the
-#           NTT twiddle domain and calibrates once; only the typed layer (the
-#           MSM context, the SRS bases a line uploads) exists per line.
-gpu = ["gpu-v1"]
+# Both lines link ONE instance of the CUDA backend crate (midnight-bls12-381-cuda,
+# `links`-guarded), so a process proving on both lines loads the backend, builds
+# the NTT twiddle domain and calibrates once; only the typed layer (the MSM
+# context, the SRS bases a line uploads) exists per line.
+gpu = ["gpu-v1", "gpu-v2"]
 gpu-v1 = ["midnight-proofs-v1/gpu"]
 gpu-v2 = ["midnight-proofs/gpu", "transient-crypto/gpu"]
 proptest = [

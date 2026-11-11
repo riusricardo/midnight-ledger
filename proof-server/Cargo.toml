@@ -7,11 +7,12 @@ publish = false
 
 [features]
 default = []
-# GPU proving (see zkir's `gpu`): the 0.7.x pipeline, which proves every
-# built-in circuit. `gpu-v2` adds the 0.8.x pipeline; the external zkir-v3
-# shares that midnight-proofs node with zkir, so feature unification covers it.
+# GPU proving (see zkir's `gpu`): both pipelines, the 0.7.x one that proves
+# every built-in circuit and the 0.8.x one for IR V2+ and zkir-v3 (the external
+# zkir-v3 shares that midnight-proofs node with zkir, so feature unification
+# covers it). `gpu-v2` is kept as an alias of `gpu` for existing build commands.
 gpu = ["zkir/gpu"]
-gpu-v2 = ["gpu", "zkir/gpu-v2"]
+gpu-v2 = ["gpu"]
 # Disabled for now, as we currently have no experimental features.
 #experimental = []
 

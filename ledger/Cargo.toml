@@ -19,10 +19,11 @@ mock-verify = ["transient-crypto/mock-verify", "zkir_v2/mock-verify"]
 fixed-point-custom-serde = ["base-crypto/fixed-point-custom-serde"]
 # GPU proving. The ledger itself is prover-agnostic (it drives a
 # `ProvingProvider`); the prover lives in zkir, whose `gpu` covers both zk
-# stacks. Pulls zkir in so `--features gpu` is never a silent no-op.
-gpu = ["dep:zkir_v2", "zkir_v2/gpu"]
-# Also GPU-accelerate the 0.8.x pipeline (IR V2+, zkir-v3); see zkir's `gpu-v2`.
-gpu-v2 = ["gpu", "zkir_v2/gpu-v2", "transient-crypto/gpu"]
+# stacks (the 0.7.x pipeline and the 0.8.x one for IR V2+ and zkir-v3). Pulls
+# zkir in so `--features gpu` is never a silent no-op.
+gpu = ["dep:zkir_v2", "zkir_v2/gpu", "transient-crypto/gpu"]
+# Kept as an alias of `gpu` for existing build commands.
+gpu-v2 = ["gpu"]
 
 [dependencies]
 coin-structure = { version = "3.0.1", path = "../coin-structure", package = "midnight-coin-structure" }
