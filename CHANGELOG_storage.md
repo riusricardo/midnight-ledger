@@ -1,5 +1,15 @@
 # `storage` Changelog
 
+## Unreleased
+
+## Version `3.1.0`
+
+- fix: add the scoped thread-local
+  `merkle_patricia_trie::ALLOW_SHORT_EXTENSION_CHAINS`, which, while set, lets
+  clients deserialize tries in which an `Extension` node shorter than 255
+  nibbles has an `Extension` child. `insert` produces such tries in some cases,
+  and they exist in chain state. Nodes and consensus code must never set it.
+
 ## Version `3.0.0`
 
 - fix: a state-translation run that exhausts its budget continues until it

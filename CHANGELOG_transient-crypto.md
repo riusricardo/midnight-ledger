@@ -1,5 +1,12 @@
 # `transient-crypto` Changelog
 
+## Unreleased
+
+## Version `3.1.0`
+
+- feat: add `PureGeneratorPedersen::smallest_representable`, for bounding
+  transaction sizes from below.
+
 ## Version `3.0.1`
 
 - feat: `MerkleTree::fold` combines a function over a tree's leaves in time
