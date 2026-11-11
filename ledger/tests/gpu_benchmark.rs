@@ -2,7 +2,7 @@
 // Copyright (C) Midnight Foundation
 // SPDX-License-Identifier: Apache-2.0
 //
-// GPU proving benchmark on a REAL Ledger-9 (ledger-9.1.0.0-rc.6) Zswap+Dust
+// GPU proving benchmark on a REAL Ledger-9 Zswap+Dust
 // transaction, shaped like the Parity (closed-CUDA) reference run. See
 // midnight-bls12-381-cuda/openspec/changes/parity-comparable-benchmark.
 //
