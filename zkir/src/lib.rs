@@ -359,6 +359,30 @@ fn cpu_device_selected() -> bool {
         .is_ok_and(|device| matches!(device.to_lowercase().as_str(), "cpu" | "blst"))
 }
 
+/// One line describing the GPU proving configuration in effect: the device
+/// mode (`MIDNIGHT_DEVICE`: Auto, GPU or CPU) and, when the CUDA backend is in
+/// use, the device and the MSM / NTT sizes below which work stays on the CPU.
+/// Both lines share one backend, so this reads it through whichever line is
+/// compiled in (the 0.7.x line's fork when both are). In CPU mode the backend
+/// is not probed, so nothing touches the GPU. `None` in a build without GPU
+/// support.
+pub fn gpu_backend_info() -> Option<String> {
+    #[cfg(feature = "gpu-v1")]
+    {
+        use midnight_proofs_v1::gpu_accel::GpuAccelerator;
+        Some(midnight_proofs_v1::gpu_accel::global_accelerator().backend_info())
+    }
+    #[cfg(all(feature = "gpu-v2", not(feature = "gpu-v1")))]
+    {
+        use midnight_proofs::gpu_accel::GpuAccelerator;
+        Some(midnight_proofs::gpu_accel::global_accelerator().backend_info())
+    }
+    #[cfg(not(any(feature = "gpu-v1", feature = "gpu-v2")))]
+    {
+        None
+    }
+}
+
 /// The GPU backend's autotune command (`midnight-gpu-autotune`), for a binary
 /// to mount as a subcommand: `program` is the command name its usage text
 /// shows, `args` the arguments after it, and the result the process exit

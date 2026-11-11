@@ -109,14 +109,10 @@ async fn main() -> std::io::Result<()> {
             GpuLineStatus::NotCompiled => {}
         }
     }
-    if let (Some(v1), Some(v2)) = (gpu.v1_calibration, gpu.v2_calibration)
-        && (v1.msm_min_k, v1.ntt_min_k) != (v2.msm_min_k, v2.ntt_min_k)
-    {
-        warn!(
-            "the GPU proving lines run with different crossovers (each measured its own, \
-             e.g. under MIDNIGHT_AUTOTUNE=refresh); `midnight-proof-server autotune \
-             --refresh` measures once for both"
-        );
+    // Both lines share one backend instance and so one calibration; what is left
+    // to report is the device mode and the thresholds it routes work by.
+    if let Some(info) = zkir::gpu_backend_info() {
+        info!("GPU proving: {info}");
     }
     if !args.no_fetch_params {
         info!("Ensuring zswap key material is available...");
