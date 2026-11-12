@@ -113,6 +113,17 @@ pub enum IrMinorVersion {
 #[tag = "prover-key[v7](ir-source[v2])"]
 struct FacadeProverKey(Vec<u8>);
 
+/// Reads a prover key (of either pipeline) from the data of a
+/// `FacadeProverKey`: the key's encoding is the data's length followed by the
+/// data. Both go into one buffer, read as a slice (the key's bytes are
+/// deserialized one read call at a time).
+pub(crate) fn prover_key_from_facade_data<K: Deserializable>(data: &[u8]) -> io::Result<K> {
+    let mut encoded = Vec::with_capacity(data.len() + 8);
+    Serializable::serialize(&(data.len() as u32), &mut encoded)?;
+    encoded.extend_from_slice(data);
+    Deserializable::deserialize(&mut &encoded[..], 0)
+}
+
 impl Zkir for IrSource {
     type ProverKey = MidnightPK<IrSource>;
 
@@ -228,12 +239,7 @@ impl Zkir for IrSource {
             serialize::tagged_deserialize(&mut reader)
         } else if tag == expected_tag_old {
             let FacadeProverKey(data) = serialize::tagged_deserialize::<FacadeProverKey>(reader)?;
-            let mut header = Vec::new();
-            Serializable::serialize(&(data.len() as u32), &mut header)?;
-            let mut header_cursor = &header[..];
-            let mut data_cursor = &data[..];
-            let mut reader = Read::chain(&mut header_cursor, &mut data_cursor);
-            Deserializable::deserialize(&mut reader, 0)
+            prover_key_from_facade_data(&data)
         } else {
             Err(io::Error::new(
                 io::ErrorKind::InvalidData,

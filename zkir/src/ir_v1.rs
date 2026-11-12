@@ -41,7 +41,7 @@ use std::io::{self, Read, Seek};
 use transient_crypto::curve::{FR_BITS, FR_BYTES_STORED};
 use transient_crypto::fab::AlignmentExt;
 
-use super::ir::{Instruction as I, IrSource};
+use super::ir::{Instruction as I, IrSource, prover_key_from_facade_data};
 
 /// The old outer scalar type, from midnight-curves v0.2 (via transient-crypto-old).
 type OldScalar = transient_crypto_old::curve::outer::Scalar;
@@ -667,12 +667,7 @@ impl transient_crypto_old::proofs::Zkir for IrSource {
             serialize::tagged_deserialize(&mut reader)
         } else if tag == expected_tag_old {
             let FacadeProverKey(data) = serialize::tagged_deserialize::<FacadeProverKey>(reader)?;
-            let mut header = Vec::new();
-            Serializable::serialize(&(data.len() as u32), &mut header)?;
-            let mut header_cursor = &header[..];
-            let mut data_cursor = &data[..];
-            let mut reader = Read::chain(&mut header_cursor, &mut data_cursor);
-            Deserializable::deserialize(&mut reader, 0)
+            prover_key_from_facade_data(&data)
         } else {
             Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -818,6 +813,93 @@ pub(crate) fn self_verify(
         proof,
         pis.iter().copied(),
     )
+}
+
+#[cfg(test)]
+mod prover_key_tests {
+    use super::FacadeProverKey;
+    use crate::ir::IrSource;
+    use serialize::{Deserializable, Serializable};
+    use std::io::{Cursor, Read};
+    use transient_crypto::proofs::{ProverKey as CurrentProverKey, Zkir as CurrentZkir};
+    use transient_crypto_old::proofs::{ProverKey as OldProverKey, Zkir as OldZkir};
+
+    fn payload() -> Vec<u8> {
+        (0..100_000u32)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8)
+            .collect()
+    }
+
+    fn bytes_of(key: &impl Serializable) -> Vec<u8> {
+        let mut out = Vec::new();
+        Serializable::serialize(key, &mut out).unwrap();
+        out
+    }
+
+    /// The key a `FacadeProverKey` holding `data` used to give: its length and
+    /// the data, read through a chained reader.
+    fn chained<K: Deserializable>(data: &[u8]) -> K {
+        let mut header = Vec::new();
+        Serializable::serialize(&(data.len() as u32), &mut header).unwrap();
+        Deserializable::deserialize(&mut Read::chain(&header[..], data), 0).unwrap()
+    }
+
+    fn facade_tagged(data: &[u8]) -> Vec<u8> {
+        let mut tagged = Vec::new();
+        serialize::tagged_serialize(&FacadeProverKey(data.to_vec()), &mut tagged).unwrap();
+        tagged
+    }
+
+    fn current_tagged(data: &[u8]) -> Vec<u8> {
+        let key: CurrentProverKey<IrSource> = chained(data);
+        let mut tagged = Vec::new();
+        serialize::tagged_serialize(&key, &mut tagged).unwrap();
+        tagged
+    }
+
+    fn load_old(tagged: &[u8]) -> std::io::Result<OldProverKey<IrSource>> {
+        <IrSource as OldZkir>::load_prover_key_from_tagged(Cursor::new(tagged))
+    }
+
+    fn load_current(tagged: &[u8]) -> std::io::Result<CurrentProverKey<IrSource>> {
+        <IrSource as CurrentZkir>::load_prover_key_from_tagged(Cursor::new(tagged))
+    }
+
+    #[test]
+    fn facade_prover_keys_read_as_through_a_chained_reader() {
+        let data = payload();
+        let tagged = facade_tagged(&data);
+        let old = load_old(&tagged).unwrap();
+        assert!(bytes_of(&old) == bytes_of(&chained::<OldProverKey<IrSource>>(&data)));
+        let current = load_current(&tagged).unwrap();
+        assert!(bytes_of(&current) == bytes_of(&chained::<CurrentProverKey<IrSource>>(&data)));
+    }
+
+    #[test]
+    fn v1_prover_keys_read_as_through_the_current_type() {
+        let data = payload();
+        for tagged in [facade_tagged(&data), current_tagged(&data)] {
+            // The former V0/V1 path: the current type, written out and read back as v1.
+            let written = bytes_of(&load_current(&tagged).unwrap());
+            let via_current: OldProverKey<IrSource> =
+                Deserializable::deserialize(&mut &written[..], 0).unwrap();
+            let direct = load_old(&tagged).unwrap();
+            assert!(bytes_of(&direct) == bytes_of(&via_current));
+            assert!(bytes_of(&direct) == written);
+
+            // Truncated input, trailing bytes and another tag fail on both paths.
+            let truncated = &tagged[..tagged.len() - 1];
+            let mut trailing = tagged.clone();
+            trailing.push(0);
+            let mut retagged = tagged.clone();
+            let colon = retagged.iter().position(|b| *b == b':').unwrap();
+            retagged[colon + 1] ^= 0x20;
+            for bad in [truncated, &trailing[..], &retagged[..]] {
+                assert!(load_old(bad).is_err());
+                assert!(load_current(bad).is_err());
+            }
+        }
+    }
 }
 
 #[cfg(all(test, feature = "gpu-v1"))]

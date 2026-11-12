@@ -488,15 +488,12 @@ impl<
         match ir.version {
             IrMinorVersion::V0 | IrMinorVersion::V1 => {
                 // V0/V1: use old Zkir pipeline directly.
-                // Load PK via IrSource's multi-tag loader, then convert to old ProverKey.
-                use transient_crypto::proofs::Zkir as _;
-                let current_pk = IrSource::load_prover_key_from_tagged(std::io::Cursor::new(
-                    &proving_data.prover_key[..],
-                ))?;
-                let mut pk_buf = Vec::new();
-                serialize::Serializable::serialize(&current_pk, &mut pk_buf)?;
-                let pk: transient_crypto_old::proofs::ProverKey<IrSource> =
-                    serialize::Deserializable::deserialize(&mut &pk_buf[..], 0)?;
+                // Load PK via IrSource's multi-tag loader, straight into the old ProverKey
+                // (both pipelines' keys share their tags and their encoding).
+                let pk =
+                    <IrSource as transient_crypto_old::proofs::Zkir>::load_prover_key_from_tagged(
+                        std::io::Cursor::new(&proving_data.prover_key[..]),
+                    )?;
                 let old_preimage = ir_v1::preimage_to_v1(&preimage);
                 let v1_params = ir_v1::V1Params(self.params);
                 #[cfg_attr(not(feature = "gpu-v1"), allow(unused_variables))]
