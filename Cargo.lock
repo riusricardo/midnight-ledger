@@ -3186,7 +3186,7 @@ dependencies = [
 [[package]]
 name = "midnight-bls12-381-cuda"
 version = "0.3.0"
-source = "git+https://github.com/riusricardo/midnight-bls12-381-cuda?branch=main#b61dc8db9606f148521cebe094a3389a71f659a1"
+source = "git+https://github.com/riusricardo/midnight-bls12-381-cuda?branch=main#69dae780ef594f640085ab8cec38db8256eaadc6"
 dependencies = [
  "ff 0.13.1",
  "group 0.13.0",
