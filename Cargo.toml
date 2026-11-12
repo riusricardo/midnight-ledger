@@ -69,14 +69,14 @@ panic = "abort"
 [patch.crates-io]
 midnight-base-crypto = { path = "base-crypto" }
 midnight-serialize = { path = "serialize" }
-# The pinned midnight-zkir asks crates.io for transient-crypto 3.0.0, which is
-# unpublished; resolve it to the in-tree copy.
+# midnight-zkir v3 asks crates.io for transient-crypto ^3.0.0; resolve it to
+# the in-tree copy so both share one set of types.
 midnight-transient-crypto = { path = "transient-crypto" }
 # GPU acceleration: Ledger 9 links TWO zk stacks, so BOTH semver lines of
 # midnight-proofs + midnight-curves are redirected (Cargo multi-version patch:
 # distinct keys + `package`). Every crates.io consumer of each line --
 # midnight-circuits 6.3/7.3, midnight-zk-stdlib 1.3/2.4, blake2b_halo2,
-# sha3-circuit, transient-crypto-old (2.2), midnight-zkir 3.2 (git) -- then
+# sha3-circuit, transient-crypto-old (2.2), midnight-zkir 3.2 -- then
 # links the patched crate, so circuits/zk-stdlib need no patch of their own.
 # The forks' one CUDA backend (riusricardo/midnight-bls12-381-cuda, which both
 # forks name by the same git spec) takes midnight-curves 0.2.1 and 0.3.1 through
