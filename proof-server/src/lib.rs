@@ -26,6 +26,8 @@ use crate::endpoints::{
 use crate::worker_pool::WorkerPool;
 
 pub mod endpoints;
+#[cfg(feature = "gpu")]
+pub mod params_cache;
 pub mod versioned_ir;
 pub mod worker_pool;
 

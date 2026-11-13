@@ -57,6 +57,15 @@ struct Args {
         env = "MIDNIGHT_PROOF_SERVER_NO_FETCH_PARAMS"
     )]
     no_fetch_params: bool,
+    /// Prover parameters kept in memory between proofs, in MiB of base points: the
+    /// most recently used sizes that fit (0 reads them again for every proof).
+    #[cfg(feature = "gpu")]
+    #[arg(
+        long,
+        default_value_t = midnight_proof_server::params_cache::DEFAULT_PARAMS_CACHE_MIB,
+        env = "MIDNIGHT_PROOF_SERVER_PARAMS_CACHE_MIB"
+    )]
+    params_cache_mib: u64,
 }
 
 /// The `autotune` subcommand, listed under `--help` in GPU builds.
@@ -113,6 +122,14 @@ async fn main() -> std::io::Result<()> {
     // to report is the device mode and the thresholds it routes work by.
     if let Some(info) = zkir::gpu_backend_info() {
         info!("GPU proving: {info}");
+    }
+    #[cfg(feature = "gpu")]
+    {
+        midnight_proof_server::params_cache::set_budget_mib(args.params_cache_mib);
+        info!(
+            "GPU proving: prover parameters kept in memory up to {} MiB",
+            args.params_cache_mib
+        );
     }
     if !args.no_fetch_params {
         info!("Ensuring zswap key material is available...");

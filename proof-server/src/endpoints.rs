@@ -56,6 +56,19 @@ lazy_static! {
     );
 }
 
+/// The prover parameters of the proving endpoints: in GPU builds [`PUBLIC_PARAMS`]
+/// behind the in-memory cache of [`crate::params_cache`].
+#[cfg(feature = "gpu")]
+pub(crate) fn prover_params() -> &'static crate::params_cache::ParamsCache {
+    &crate::params_cache::PROVER_PARAMS
+}
+
+/// The prover parameters of the proving endpoints: [`PUBLIC_PARAMS`].
+#[cfg(not(feature = "gpu"))]
+pub(crate) fn prover_params() -> &'static ZswapResolver {
+    &PUBLIC_PARAMS
+}
+
 async fn payload_to_bytes(mut payload: Payload) -> Result<Bytes, Error> {
     let mut body = BytesMut::new();
     while let Some(chunk) = payload.next().await {
@@ -358,9 +371,15 @@ pub(crate) async fn prove_transaction(
                         Box::pin(std::future::ready(Ok(keys.get(loc.0.as_ref()).cloned())))
                     }),
                 );
+                // GPU builds prove with the cached parameters; the resolver reads the
+                // same parameters from the same data provider, for every job.
+                #[cfg(feature = "gpu")]
+                let params = prover_params();
+                #[cfg(not(feature = "gpu"))]
+                let params = &resolver;
                 let provider = zkir_v2::LocalProvingProvider {
                     rng: OsRng,
-                    params: &resolver,
+                    params,
                     resolver: &resolver,
                 };
                 // NOTE: The initial cost model here is part of why this is deprecated!
