@@ -684,19 +684,19 @@ async fn real_tx_prove_bench() {
         seed + repeat as u64 - 1,
         PARAMS.enabled,
     );
-    assert!(
-        cfg!(feature = "proof-verifying"),
-        "the well-formedness check needs the default `proof-verifying` feature"
-    );
+    if !cfg!(feature = "proof-verifying") {
+        panic!("the well-formedness check needs the default `proof-verifying` feature");
+    }
 
     // A GPU (or Auto) arm must actually be able to use the GPU: without the feature no
     // backend is linked and every op silently runs on CPU, even under strict mode.
     if !cpu_device(&device) {
-        assert!(
-            cfg!(feature = "gpu"),
-            "MIDNIGHT_DEVICE={device} needs a GPU build: add --features gpu \
-             (or set MIDNIGHT_DEVICE=cpu for the CPU arm)"
-        );
+        if !cfg!(feature = "gpu") {
+            panic!(
+                "MIDNIGHT_DEVICE={device} needs a GPU build: add --features gpu \
+                 (or set MIDNIGHT_DEVICE=cpu for the CPU arm)"
+            );
+        }
         // Without strict mode a GPU op that fails is redone on CPU with only a
         // [GPU-FALLBACK] line on stderr, and the arm would still report GPU numbers.
         assert!(
