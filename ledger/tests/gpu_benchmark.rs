@@ -44,11 +44,11 @@
 // default SRS params are memoized per k, so the warmup really warms them: the 0.8.x
 // params are read, hashed and parsed once per k, and `gpu` builds of zkir also reuse
 // one converted 0.7.x instance per k, with its uploaded GPU bases. That measures a
-// server that holds its params. This repo's proof server does not: it proves with
-// the data provider's params, re-read for every job, so zkir also converts them (and
-// in `gpu` builds uploads the bases) per job. BENCH_PARAMS_CACHE=0 measures that
-// configuration by reloading the params for every job; report both, as the RESULT
-// line names the setting.
+// server that holds its params, as this repo's proof server does in `gpu` builds
+// (proof-server/src/params_cache.rs, within a memory budget). Without `gpu` it proves
+// with the data provider's params, re-read for every job, so zkir also converts them
+// per job. BENCH_PARAMS_CACHE=0 measures that configuration by reloading the params
+// for every job; report both, as the RESULT line names the setting.
 //
 // Byte-exactness (BENCH_DUMP / BENCH_EXPECT): everything this harness controls is
 // seeded, yet proofs are not reproducible with upstream midnight-proofs 0.7.3: its
@@ -91,7 +91,8 @@
 //   BENCH_REPEAT       (default 5)      timed iterations
 //   BENCH_WARMUP       (default 1)      untimed warmup proves (seeds BENCH_SEED-1, -2, ...)
 //   BENCH_PARAMS_CACHE (default 1)      0 => reload SRS params for every proof job, as
-//                                       the proof server does (see Params and keys)
+//                                       a proof server without `gpu` does (see Params
+//                                       and keys)
 //   BENCH_DUMP         (optional path)  write every timed tx and its proofs here
 //   BENCH_EXPECT       (optional path)  compare with another run's BENCH_DUMP and check
 //                                       its transactions here; panics on mismatch or
