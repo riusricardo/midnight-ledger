@@ -29,6 +29,15 @@ use tracing_subscriber::{Layer, Registry};
 use transient_crypto::proofs::{KeyLocation, Resolver as ResolverT};
 use zkir::{GpuCalibration, GpuLineStatus};
 
+/// Default worker count. A client sends a transaction's proofs together, and GPU
+/// builds prove them concurrently on one device (most of its memory, the NTT tables
+/// and the parameters' bases, is shared between proofs), so they default to more
+/// workers than CPU builds.
+#[cfg(feature = "gpu")]
+const DEFAULT_NUM_WORKERS: usize = 4;
+#[cfg(not(feature = "gpu"))]
+const DEFAULT_NUM_WORKERS: usize = 2;
+
 #[derive(Parser, Debug)]
 #[cfg_attr(feature = "gpu", command(after_help = AUTOTUNE_HELP))]
 struct Args {
@@ -43,7 +52,8 @@ struct Args {
     verbose: bool,
     #[arg(long, default_value_t = 10, env = "MIDNIGHT_PROOF_SERVER_JOB_CAPACITY")]
     job_capacity: usize,
-    #[arg(long, default_value_t = 2, env = "MIDNIGHT_PROOF_SERVER_NUM_WORKERS")]
+    /// Proofs proved at once.
+    #[arg(long, default_value_t = DEFAULT_NUM_WORKERS, env = "MIDNIGHT_PROOF_SERVER_NUM_WORKERS")]
     num_workers: usize,
     #[arg(
         long,
