@@ -395,8 +395,9 @@ pub fn gpu_backend_info() -> Option<String> {
 /// --quiet    stable key=value output, combined with the above
 /// ```
 ///
-/// Exit codes: `0` calibrated values in effect, `2` no GPU or
-/// `MIDNIGHT_AUTOTUNE=0` (built-in defaults in effect), `1` failure.
+/// Exit codes: `0` calibrated values in effect, `2` none in effect (no GPU,
+/// `MIDNIGHT_AUTOTUNE=0`, or none persisted for this hardware: built-in
+/// defaults in effect), `1` failure.
 ///
 /// Both lines share one backend, which reads one file
 /// (`MIDNIGHT_AUTOTUNE_CACHE`, an absolute path, else `autotune-v1.conf` in
