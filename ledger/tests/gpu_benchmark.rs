@@ -96,6 +96,18 @@
 //   BENCH_EXPECT       (optional path)  compare with another run's BENCH_DUMP and check
 //                                       its transactions here; panics on mismatch or
 //                                       rejection (see Byte-exactness)
+//   BENCH_SERVER_URL   (optional URL)   prove through a running proof server instead
+//                                       (see Proof server)
+//
+// Proof server (BENCH_SERVER_URL, e.g. http://127.0.0.1:6300): every proof job goes to
+// the server's `/prove` endpoint through `ProofServerProvider`, as a client proving
+// through a server does. The ledger joins a transaction's proof futures and that
+// provider awaits network I/O, so the five requests are in flight together and the
+// server's worker pool (`--num-workers`) decides how many it proves at once; it proves
+// with its own parameters, keys and randomness. Per-job times are then request round
+// trips, which overlap. This process builds, seals and checks the transactions only:
+// it initializes no GPU, whatever MIDNIGHT_DEVICE says, and BENCH_DUMP / BENCH_EXPECT do
+// not apply (the server's proofs are not reproducible).
 //
 // Key material: zswap/10/{spend,output}.{prover,verifier,bzkir}, dust/10/spend.* and
 // bls_midnight_2p{k} are resolved by the data provider from $MIDNIGHT_PP (else
@@ -122,7 +134,7 @@ use base_crypto::rng::SplittableRng;
 use coin_structure::coin::{Info as CoinInfo, ShieldedTokenType};
 use midnight_ledger::prove::Resolver;
 use midnight_ledger::structure::{ProofMarker, Transaction};
-use midnight_ledger::test_utilities::{TestState, test_resolver};
+use midnight_ledger::test_utilities::{ProofServerProvider, TestState, test_resolver};
 use midnight_ledger::verify::WellFormedStrictness;
 use midnight_ledger_v9 as midnight_ledger;
 use onchain_runtime::cost_model::INITIAL_COST_MODEL;
@@ -150,6 +162,8 @@ lazy_static! {
         enabled: env_u64("BENCH_PARAMS_CACHE", 1) != 0,
         by_k: Mutex::new(BTreeMap::new()),
     };
+    /// The proof server to prove through, if any (see Proof server).
+    static ref SERVER: Option<String> = std::env::var("BENCH_SERVER_URL").ok();
 }
 
 /// In `gpu` builds zkir verifies every V0 proof inside `Transaction::prove`.
@@ -207,8 +221,9 @@ struct Job {
 
 /// Transparent `ProvingProvider` wrapper that records, per proof job, the key
 /// location, the wall time spent inside the inner provider's `prove` and the proof.
-/// (Jobs are driven by `join_all` on one task and each proof is synchronous
-/// CPU/GPU work, so per-job times are effectively sequential and sum to ~total.)
+/// (With a local prover, jobs are driven by `join_all` on one task and each proof is
+/// synchronous CPU/GPU work, so per-job times are effectively sequential and sum to
+/// ~total; through a proof server they are request round trips that overlap.)
 struct Recording<P> {
     inner: P,
     jobs: Arc<Mutex<Vec<Job>>>,
@@ -392,19 +407,33 @@ async fn prove_tx(seed: u64) -> Proven {
         .await
         .expect("balance_tx must succeed");
 
-    let provider = Recording {
-        inner: LocalProvingProvider {
-            rng: rng.split(),
-            params: &*PARAMS,
-            resolver: &*RESOLVER,
-        },
-        jobs: jobs.clone(),
-    };
+    // Split in either mode, so the rest of the rng stream (the seal) is the same.
+    let prover_rng = rng.split();
     let t_prove = Instant::now();
-    let proven = balanced
-        .prove(provider, &INITIAL_COST_MODEL)
-        .await
-        .expect("prove failed");
+    let proven = match &*SERVER {
+        Some(base_url) => {
+            let provider = Recording {
+                inner: ProofServerProvider {
+                    base_url: base_url.clone(),
+                    resolver: &RESOLVER,
+                },
+                jobs: jobs.clone(),
+            };
+            balanced.prove(provider, &INITIAL_COST_MODEL).await
+        }
+        None => {
+            let provider = Recording {
+                inner: LocalProvingProvider {
+                    rng: prover_rng,
+                    params: &*PARAMS,
+                    resolver: &*RESOLVER,
+                },
+                jobs: jobs.clone(),
+            };
+            balanced.prove(provider, &INITIAL_COST_MODEL).await
+        }
+    }
+    .expect("prove failed");
     let prove_ms = ms_since(t_prove);
 
     let sealed: SealedTx = proven.seal(rng.split());
@@ -677,20 +706,36 @@ async fn real_tx_prove_bench() {
     let strict = std::env::var("MIDNIGHT_GPU_STRICT").unwrap_or_else(|_| "0".into());
     let dump = std::env::var("BENCH_DUMP").ok();
     let expect = std::env::var("BENCH_EXPECT").ok();
+    // What the RESULT line names as device and params setting: the server decides both
+    // when it proves.
+    let (device_label, params_label) = match &*SERVER {
+        Some(_) => ("server".to_string(), "server".to_string()),
+        None => (device.clone(), PARAMS.enabled.to_string()),
+    };
 
-    eprintln!(
-        "== real_tx_prove_bench :: device={device} strict={strict} seeds={seed}..={} \
-         warmup={warmup} params_cache={} prover_self_verifies={PROVER_SELF_VERIFIES} ==",
-        seed + repeat as u64 - 1,
-        PARAMS.enabled,
-    );
+    match &*SERVER {
+        Some(url) => eprintln!(
+            "== real_tx_prove_bench :: server={url} seeds={seed}..={} warmup={warmup} ==",
+            seed + repeat as u64 - 1,
+        ),
+        None => eprintln!(
+            "== real_tx_prove_bench :: device={device} strict={strict} seeds={seed}..={} \
+             warmup={warmup} params_cache={} prover_self_verifies={PROVER_SELF_VERIFIES} ==",
+            seed + repeat as u64 - 1,
+            PARAMS.enabled,
+        ),
+    }
     if !cfg!(feature = "proof-verifying") {
         panic!("the well-formedness check needs the default `proof-verifying` feature");
     }
+    assert!(
+        SERVER.is_none() || (dump.is_none() && expect.is_none()),
+        "BENCH_DUMP / BENCH_EXPECT do not apply to proofs made by a proof server"
+    );
 
     // A GPU (or Auto) arm must actually be able to use the GPU: without the feature no
     // backend is linked and every op silently runs on CPU, even under strict mode.
-    if !cpu_device(&device) {
+    if SERVER.is_none() && !cpu_device(&device) {
         if !cfg!(feature = "gpu") {
             panic!(
                 "MIDNIGHT_DEVICE={device} needs a GPU build: add --features gpu \
@@ -784,10 +829,9 @@ async fn real_tx_prove_bench() {
         per_job.entry(job.key.clone()).or_default().push(job.ms);
     }
     eprintln!(
-        "== RESULT device={device} params_cache={} parity median={:.1}ms mean={:.1}ms | {PROVE} \
-         median={:.1}ms mean={:.1}ms | wf-check median={:.1}ms | bytes={:?} jobs/tx={} \
-         seeds={seed}..={} ==",
-        PARAMS.enabled,
+        "== RESULT device={device_label} params_cache={params_label} parity median={:.1}ms \
+         mean={:.1}ms | {PROVE} median={:.1}ms mean={:.1}ms | wf-check median={:.1}ms | \
+         bytes={:?} jobs/tx={} seeds={seed}..={} ==",
         median(parity.clone()),
         mean(&parity),
         median(prove.clone()),
