@@ -14,6 +14,9 @@
 #![deny(unreachable_pub)]
 #![deny(warnings)]
 use clap::Parser;
+use std::fmt;
+use std::num::NonZeroUsize;
+use std::str::FromStr;
 
 use base_crypto::data_provider::{FetchMode, MidnightDataProvider, OutputMode};
 use futures::future::join;
@@ -31,12 +34,58 @@ use zkir::{GpuCalibration, GpuLineStatus};
 
 /// Default worker count. A client sends a transaction's proofs together, and GPU
 /// builds prove them concurrently on one device (most of its memory, the NTT tables
-/// and the parameters' bases, is shared between proofs), so they default to more
-/// workers than CPU builds.
+/// and the parameters' bases, is shared between proofs) while their CPU phases
+/// share the host's CPUs, so they default to one worker per available CPU.
 #[cfg(feature = "gpu")]
-const DEFAULT_NUM_WORKERS: usize = 4;
+const DEFAULT_NUM_WORKERS: NumWorkers = NumWorkers::Auto;
 #[cfg(not(feature = "gpu"))]
-const DEFAULT_NUM_WORKERS: usize = 2;
+const DEFAULT_NUM_WORKERS: NumWorkers = NumWorkers::Count(2);
+
+/// The fewest workers `auto` chooses (upstream's default).
+const MIN_AUTO_WORKERS: usize = 2;
+
+/// `--num-workers`: a count, or `auto` for one worker per CPU available to the
+/// process (at least [`MIN_AUTO_WORKERS`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NumWorkers {
+    Auto,
+    Count(usize),
+}
+
+impl NumWorkers {
+    /// The worker count, given the CPUs available to the process (`None` when
+    /// unknown).
+    fn resolve(self, cpus: Option<NonZeroUsize>) -> usize {
+        match self {
+            Self::Count(n) => n,
+            Self::Auto => cpus
+                .map_or(MIN_AUTO_WORKERS, NonZeroUsize::get)
+                .max(MIN_AUTO_WORKERS),
+        }
+    }
+}
+
+impl FromStr for NumWorkers {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.eq_ignore_ascii_case("auto") {
+            return Ok(Self::Auto);
+        }
+        s.parse()
+            .map(Self::Count)
+            .map_err(|_| format!("expected a number or `auto`, got `{s}`"))
+    }
+}
+
+impl fmt::Display for NumWorkers {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Auto => f.write_str("auto"),
+            Self::Count(n) => write!(f, "{n}"),
+        }
+    }
+}
 
 #[derive(Parser, Debug)]
 #[cfg_attr(feature = "gpu", command(after_help = AUTOTUNE_HELP))]
@@ -52,9 +101,10 @@ struct Args {
     verbose: bool,
     #[arg(long, default_value_t = 10, env = "MIDNIGHT_PROOF_SERVER_JOB_CAPACITY")]
     job_capacity: usize,
-    /// Proofs proved at once.
+    /// Proofs proved at once: a number, or `auto` for one per CPU available to the
+    /// process (at least 2).
     #[arg(long, default_value_t = DEFAULT_NUM_WORKERS, env = "MIDNIGHT_PROOF_SERVER_NUM_WORKERS")]
-    num_workers: usize,
+    num_workers: NumWorkers,
     #[arg(
         long,
         default_value_t = 600.0,
@@ -170,7 +220,16 @@ async fn main() -> std::io::Result<()> {
         ks.into_iter().collect::<Result<Vec<_>, _>>()?;
         keys.into_iter().collect::<Result<Vec<_>, _>>()?;
     }
-    let pool = WorkerPool::new(args.num_workers, args.job_capacity, args.job_timeout);
+    let cpus = std::thread::available_parallelism().ok();
+    let num_workers = args.num_workers.resolve(cpus);
+    match args.num_workers {
+        NumWorkers::Auto => info!(
+            "Proof workers: {num_workers} (auto: one per available CPU, {} available)",
+            cpus.map_or_else(|| "unknown".to_owned(), |n| n.to_string())
+        ),
+        NumWorkers::Count(_) => info!("Proof workers: {num_workers}"),
+    }
+    let pool = WorkerPool::new(num_workers, args.job_capacity, args.job_timeout);
     server(args.port, !args.no_fetch_params, pool)
         .unwrap()
         .0
@@ -207,4 +266,62 @@ fn init_logging(verbose: bool) {
         )
         .try_init()
         .ok();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cpus(n: usize) -> Option<NonZeroUsize> {
+        NonZeroUsize::new(n)
+    }
+
+    #[test]
+    fn auto_is_one_worker_per_available_cpu_and_at_least_the_minimum() {
+        assert_eq!(NumWorkers::Auto.resolve(cpus(8)), 8);
+        assert_eq!(NumWorkers::Auto.resolve(cpus(64)), 64);
+        assert_eq!(NumWorkers::Auto.resolve(cpus(1)), MIN_AUTO_WORKERS);
+        assert_eq!(NumWorkers::Auto.resolve(None), MIN_AUTO_WORKERS);
+    }
+
+    #[test]
+    fn an_explicit_count_is_used_as_given() {
+        assert_eq!(NumWorkers::Count(3).resolve(cpus(8)), 3);
+        assert_eq!(NumWorkers::Count(12).resolve(None), 12);
+    }
+
+    #[test]
+    fn num_workers_parses_a_count_or_auto() {
+        assert_eq!("auto".parse(), Ok(NumWorkers::Auto));
+        assert_eq!("AUTO".parse(), Ok(NumWorkers::Auto));
+        assert_eq!("4".parse(), Ok(NumWorkers::Count(4)));
+        assert!("".parse::<NumWorkers>().is_err());
+        assert!("-1".parse::<NumWorkers>().is_err());
+        assert!("four".parse::<NumWorkers>().is_err());
+        for value in [NumWorkers::Auto, NumWorkers::Count(6)] {
+            assert_eq!(value.to_string().parse(), Ok(value), "{value} round-trips");
+        }
+    }
+
+    #[test]
+    fn the_command_line_takes_auto_or_a_count_and_defaults_by_build() {
+        let parse = |args: &[&str]| Args::try_parse_from(args).map(|a| a.num_workers);
+        assert_eq!(
+            parse(&["server", "--num-workers", "auto"]).unwrap(),
+            NumWorkers::Auto
+        );
+        assert_eq!(
+            parse(&["server", "--num-workers", "5"]).unwrap(),
+            NumWorkers::Count(5)
+        );
+        assert!(parse(&["server", "--num-workers", "many"]).is_err());
+        if std::env::var_os("MIDNIGHT_PROOF_SERVER_NUM_WORKERS").is_none() {
+            let expected = if cfg!(feature = "gpu") {
+                NumWorkers::Auto
+            } else {
+                NumWorkers::Count(2)
+            };
+            assert_eq!(parse(&["server"]).unwrap(), expected);
+        }
+    }
 }
