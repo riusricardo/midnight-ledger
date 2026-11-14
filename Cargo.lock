@@ -3272,7 +3272,7 @@ dependencies = [
 [[package]]
 name = "midnight-curves"
 version = "0.2.1"
-source = "git+https://github.com/riusricardo/midnight-zk?branch=gpu%2Fproofs-0.7#19839be49274f2cc7cbc1132e41659037fcf06e8"
+source = "git+https://github.com/riusricardo/midnight-zk?branch=gpu%2Fproofs-0.7#94b09ffffc0ff85a5b8c8f9f192ea7d4ecb4f138"
 dependencies = [
  "bitvec",
  "blst",
@@ -3298,7 +3298,7 @@ dependencies = [
 [[package]]
 name = "midnight-curves"
 version = "0.3.1"
-source = "git+https://github.com/riusricardo/midnight-zk?branch=gpu%2Fproofs-0.8#9c5e8124e5b3baa665f27ad549f405cd44bb9467"
+source = "git+https://github.com/riusricardo/midnight-zk?branch=gpu%2Fproofs-0.8#37b3fe0d5550ce53290b8bc84b5c2c2f4b4249b4"
 dependencies = [
  "bitvec",
  "blst",
@@ -3557,7 +3557,7 @@ dependencies = [
 [[package]]
 name = "midnight-proofs"
 version = "0.7.3"
-source = "git+https://github.com/riusricardo/midnight-zk?branch=gpu%2Fproofs-0.7#19839be49274f2cc7cbc1132e41659037fcf06e8"
+source = "git+https://github.com/riusricardo/midnight-zk?branch=gpu%2Fproofs-0.7#94b09ffffc0ff85a5b8c8f9f192ea7d4ecb4f138"
 dependencies = [
  "blake2b_simd",
  "ff 0.13.1",
@@ -3580,7 +3580,7 @@ dependencies = [
 [[package]]
 name = "midnight-proofs"
 version = "0.8.2"
-source = "git+https://github.com/riusricardo/midnight-zk?branch=gpu%2Fproofs-0.8#9c5e8124e5b3baa665f27ad549f405cd44bb9467"
+source = "git+https://github.com/riusricardo/midnight-zk?branch=gpu%2Fproofs-0.8#37b3fe0d5550ce53290b8bc84b5c2c2f4b4249b4"
 dependencies = [
  "blake2b_simd",
  "ff 0.13.1",
