@@ -114,9 +114,11 @@
 // provider awaits network I/O, so the five requests are in flight together and the
 // server's worker pool (`--num-workers`) decides how many it proves at once; it proves
 // with its own parameters, keys and randomness. Per-job times are then request round
-// trips, which overlap. This process builds, seals and checks the transactions only:
-// it initializes no GPU, whatever MIDNIGHT_DEVICE says, and BENCH_DUMP / BENCH_EXPECT do
-// not apply (the server's proofs are not reproducible).
+// trips, which overlap. This process builds, seals and checks the transactions only,
+// and BENCH_DUMP / BENCH_EXPECT do not apply (the server's proofs are not reproducible).
+// Run it with MIDNIGHT_DEVICE=cpu: in forced GPU mode the checks' MSMs would run on the
+// GPU, beside the server's work. A `gpu` build asserts that it never loaded the GPU
+// backend, so the server's proofs were checked on the CPU.
 //
 // Key material: zswap/10/{spend,output}.{prover,verifier,bzkir}, dust/10/spend.* and
 // bls_midnight_2p{k} are resolved by the data provider from $MIDNIGHT_PP (else
@@ -905,8 +907,19 @@ async fn real_tx_prove_bench() {
         runs.push(run);
     }
     #[cfg(feature = "gpu")]
-    if SERVER.is_none() && repeat > 0 {
-        check_gpu_work(&device, gpu_work_before);
+    if repeat > 0 {
+        match &*SERVER {
+            None => check_gpu_work(&device, gpu_work_before),
+            Some(_) => {
+                use midnight_proofs_v1::gpu_accel::backend::diag::backend_load_count;
+                assert_eq!(
+                    backend_load_count(),
+                    0,
+                    "the client loaded the GPU backend, so it did not check the server's proofs on \
+                     the CPU alone (run it with MIDNIGHT_DEVICE=cpu)"
+                );
+            }
+        }
     }
 
     let parity: Vec<f64> = runs.iter().map(|r| r.parity_ms).collect();
