@@ -185,8 +185,24 @@ macro_rules! line_impl {
         use rand::SeedableRng;
         use rand_chacha::ChaCha8Rng;
 
+        /// The witness of column `col` at `row` (rows below the filled count are
+        /// constrained): a2 = a0 * a1, a3 on the next row = a3 + a0, a4 = a0 (copied).
+        fn witness(col: usize, row: usize) -> Fq {
+            let (a0, a1) = (Fq::from(row as u64 + 1), Fq::from(row as u64 + 2));
+            match col {
+                0 | 4 => a0,
+                1 => a1,
+                2 => a0 * a1,
+                3 => Fq::from((row * (row + 1) / 2) as u64), // sum of a0 over the rows before
+                _ => Fq::from((row + col + 1) as u64),
+            }
+        }
+
         /// Domain-filling circuit, as in gpu_ksweep.rs: 8 advice columns filled over
         /// half the domain, so polynomial sizes equal the domain size.
+        /// Its gates are not identically zero and a copy constraint ties a4 to a0, so the
+        /// quotient, the extended-domain NTTs and the quotient's evaluation must be right
+        /// for a proof to verify.
         #[derive(Clone)]
         struct DomainFillingCircuit {
             k: u32,
@@ -213,9 +229,15 @@ macro_rules! line_impl {
             fn configure(meta: &mut ConstraintSystem<Fq>) -> Self::Config {
                 let advice_cols: Vec<_> = (0..8).map(|_| meta.advice_column()).collect();
                 let selector = meta.selector();
+                meta.enable_equality(advice_cols[0]);
+                meta.enable_equality(advice_cols[4]);
                 meta.create_gate("domain_fill", |vc| {
                     let a0 = vc.query_advice(advice_cols[0], Rotation::cur());
-                    Constraints::with_selector(selector, vec![a0.clone() - a0])
+                    let a1 = vc.query_advice(advice_cols[1], Rotation::cur());
+                    let a2 = vc.query_advice(advice_cols[2], Rotation::cur());
+                    let a3 = vc.query_advice(advice_cols[3], Rotation::cur());
+                    let a3_next = vc.query_advice(advice_cols[3], Rotation::next());
+                    Constraints::with_selector(selector, vec![a2 - a0.clone() * a1, a3_next - a3 - a0])
                 });
                 DomainFillingConfig {
                     advice_cols,
@@ -235,15 +257,26 @@ macro_rules! line_impl {
                         let rows_to_fill = ((domain_size as f64) * self.fill_ratio) as usize;
                         for row in 0..rows_to_fill {
                             config.selector.enable(&mut region, row)?;
+                            let mut cells = Vec::with_capacity(config.advice_cols.len());
                             for (col_idx, col) in config.advice_cols.iter().enumerate() {
-                                region.assign_advice(
+                                cells.push(region.assign_advice(
                                     || format!("a[{col_idx}][{row}]"),
                                     *col,
                                     row,
-                                    || Value::known(Fq::from((row + col_idx + 1) as u64)),
-                                )?;
+                                    || Value::known(witness(col_idx, row)),
+                                )?);
+                            }
+                            if row == 0 {
+                                region.constrain_equal(cells[0].cell(), cells[4].cell())?;
                             }
                         }
+                        // The rotation reads a3 one row past the last constrained row.
+                        region.assign_advice(
+                            || "a[3] after the last row",
+                            config.advice_cols[3],
+                            rows_to_fill,
+                            || Value::known(witness(3, rows_to_fill)),
+                        )?;
                         Ok(())
                     },
                 )
