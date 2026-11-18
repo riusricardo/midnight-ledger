@@ -61,17 +61,23 @@
 // byte-identically across processes and devices; the library and the proof server
 // keep upstream's behaviour. A run
 // with BENCH_DUMP or BENCH_EXPECT first proves the warmup seed twice to learn
-// whether its prover is deterministic, and BENCH_EXPECT then requires:
-//   - both runs deterministic: every sealed tx identical, byte for byte;
-//   - otherwise: every sealed tx identical with its proofs erased, and the same
-//     proofs (circuit, length) in the same order; each proof's first differing byte
-//     is reported.
+// whether its prover is deterministic. BENCH_EXPECT requires both runs to be
+// deterministic and every sealed tx identical, byte for byte. With
+// BENCH_ALLOW_NONDETERMINISTIC=1 (for a build without `deterministic-lookups`) a
+// run that is not deterministic is compared instead with its proofs erased: every
+// sealed tx identical with its proofs erased, and the same proofs (circuit, length)
+// in the same order; each proof's first differing byte is reported.
 // BENCH_EXPECT also puts every transaction of the dumped run through the
 // well-formedness check again, in this process. A GPU run cannot check its own proofs
 // independently: under MIDNIGHT_DEVICE=gpu the verifier's MSMs run on the GPU too, so
 // a GPU MSM that returned a wrong result without failing could make proofs that the
 // same run's verification accepts. Running the GPU arm first and the CPU arm against
 // its dump therefore checks every GPU proof with the CPU (BLST) verifier.
+//
+// GPU work, from the backend's process-wide counters: in a gpu or Auto arm the timed
+// iterations must launch GPU MSMs and NTTs through the 0.7.x line and none through the
+// 0.8.x line (every circuit of the transaction is IR V0), and nothing may fall back to
+// the CPU; the CPU arm of a `gpu` build must never load the GPU backend.
 //
 // Backend selection is via environment:
 //   MIDNIGHT_DEVICE = cpu | gpu | (unset => Auto thresholds)
@@ -97,6 +103,8 @@
 //   BENCH_EXPECT       (optional path)  compare with another run's BENCH_DUMP and check
 //                                       its transactions here; panics on mismatch or
 //                                       rejection (see Byte-exactness)
+//   BENCH_ALLOW_NONDETERMINISTIC (default 0) 1 => accept a non-deterministic prover
+//                                       under BENCH_EXPECT (see Byte-exactness)
 //   BENCH_SERVER_URL   (optional URL)   prove through a running proof server instead
 //                                       (see Proof server)
 //
@@ -314,6 +322,68 @@ fn gpu_device(device: &str) -> bool {
 /// Whether `MIDNIGHT_GPU_STRICT` is on, parsed as the GPU backend does.
 fn strict_mode(strict: &str) -> bool {
     matches!(strict.to_lowercase().as_str(), "1" | "true" | "yes" | "on")
+}
+
+/// This process's GPU work as the backend counts it (process-wide counters, one arm
+/// per process): per proof line (0: midnight-proofs 0.7.x, 1: 0.8.x) the GPU MSMs and
+/// NTTs launched (single and batch launches together), and the GPU->CPU failure
+/// fallbacks.
+#[cfg(feature = "gpu")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GpuWork {
+    msm_ntt: [[u64; 2]; 2],
+    fallbacks: u64,
+}
+
+#[cfg(feature = "gpu")]
+impl GpuWork {
+    fn now() -> Self {
+        use midnight_proofs_v1::gpu_accel::backend::{
+            config::gpu_fallback_count,
+            diag::{OpKind, gpu_op_count},
+        };
+        let launches =
+            |line, kinds: [OpKind; 2]| -> u64 { kinds.map(|kind| gpu_op_count(line, kind)).iter().sum() };
+        GpuWork {
+            msm_ntt: [0, 1].map(|line| {
+                [
+                    launches(line, [OpKind::Msm, OpKind::MsmBatch]),
+                    launches(line, [OpKind::Ntt, OpKind::NttBatch]),
+                ]
+            }),
+            fallbacks: gpu_fallback_count(),
+        }
+    }
+}
+
+/// The timed iterations' GPU work (see GPU work in the header): in a gpu or Auto arm,
+/// GPU MSMs and NTTs on the 0.7.x line, none on the 0.8.x line and no fallback; in
+/// the CPU arm, a backend never loaded.
+#[cfg(feature = "gpu")]
+fn check_gpu_work(device: &str, before: GpuWork) {
+    let after = GpuWork::now();
+    eprintln!("  [gpu] timed iterations: {before:?} -> {after:?}");
+    if cpu_device(device) {
+        use midnight_proofs_v1::gpu_accel::backend::diag::backend_load_count;
+        assert_eq!(backend_load_count(), 0, "the CPU arm loaded the GPU backend");
+        assert_eq!(
+            after,
+            GpuWork { msm_ntt: [[0; 2]; 2], fallbacks: 0 },
+            "the CPU arm did GPU work"
+        );
+        return;
+    }
+    let [msm, ntt] = [0, 1].map(|kind| after.msm_ntt[0][kind] - before.msm_ntt[0][kind]);
+    assert!(
+        msm > 0 && ntt > 0,
+        "the 0.7.x line launched {msm} GPU MSMs and {ntt} GPU NTTs: the transaction was not \
+         proved on the GPU"
+    );
+    assert_eq!(
+        after.msm_ntt[1], before.msm_ntt[1],
+        "the 0.8.x line did GPU work, though every circuit of the transaction is IR V0"
+    );
+    assert_eq!(after.fallbacks, before.fallbacks, "a GPU operation fell back to the CPU");
 }
 
 /// The 0.7.x line's GPU backend, with the MSM / NTT size thresholds that route
@@ -613,6 +683,13 @@ fn first_difference(a: &[u8], b: &[u8]) -> Option<usize> {
 async fn check_expected(path: &str, deterministic: bool, runs: &[Proven], cpu_verifier: bool) {
     let (expected_deterministic, expected) = read_dump(path);
     let exact_required = deterministic && expected_deterministic;
+    assert!(
+        exact_required || env_u64("BENCH_ALLOW_NONDETERMINISTIC", 0) != 0,
+        "BENCH_EXPECT {path}: deterministic prover: this run {deterministic}, expected run \
+         {expected_deterministic}; test builds enable `deterministic-lookups`, so both must \
+         reproduce their proof bytes (BENCH_ALLOW_NONDETERMINISTIC=1 compares a \
+         non-deterministic run with its proofs erased)"
+    );
     assert_eq!(
         expected.len(),
         runs.len(),
@@ -733,6 +810,10 @@ async fn real_tx_prove_bench() {
         SERVER.is_none() || (dump.is_none() && expect.is_none()),
         "BENCH_DUMP / BENCH_EXPECT do not apply to proofs made by a proof server"
     );
+    assert!(
+        repeat > 0 || (dump.is_none() && expect.is_none()),
+        "BENCH_DUMP / BENCH_EXPECT need BENCH_REPEAT >= 1"
+    );
 
     // A GPU (or Auto) arm must actually be able to use the GPU: without the feature no
     // backend is linked and every op silently runs on CPU, even under strict mode.
@@ -809,6 +890,8 @@ async fn real_tx_prove_bench() {
     };
 
     // ---- timed iterations ----
+    #[cfg(feature = "gpu")]
+    let gpu_work_before = GpuWork::now();
     let mut runs = Vec::with_capacity(repeat);
     for i in 0..repeat {
         let run = prove_tx(seed + i as u64).await;
@@ -820,6 +903,10 @@ async fn real_tx_prove_bench() {
             run.tx.len()
         );
         runs.push(run);
+    }
+    #[cfg(feature = "gpu")]
+    if SERVER.is_none() && repeat > 0 {
+        check_gpu_work(&device, gpu_work_before);
     }
 
     let parity: Vec<f64> = runs.iter().map(|r| r.parity_ms).collect();
