@@ -78,7 +78,7 @@ const KS: [u32; 3] = [13, 14, 15];
 /// Size of the commitment identity check (a cached-bases GPU MSM).
 const COMMIT_K: u32 = 14;
 
-const KINDS: [OpKind; 4] = [OpKind::Msm, OpKind::MsmBatch, OpKind::Ntt, OpKind::NttBatch];
+const KINDS: [OpKind; 2] = [OpKind::Msm, OpKind::Ntt];
 
 /// Every process-wide counter the backend exposes, as read through one fork's path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,7 +89,7 @@ struct Counters {
     gpu_fallbacks: u64,
     /// GPU operations launched, `[line][kind]`: lines 0 (v02) and 1 (v03);
     /// kinds in `KINDS` order.
-    ops: [[u64; 4]; 2],
+    ops: [[u64; 2]; 2],
 }
 
 macro_rules! read_counters {
@@ -130,7 +130,7 @@ impl Counters {
     }
 
     fn ntt(&self, line: usize) -> u64 {
-        self.ops[line][2]
+        self.ops[line][1]
     }
 
     fn print(&self, label: &str) {
@@ -140,8 +140,8 @@ impl Counters {
         );
         for line in [0, 1] {
             eprintln!(
-                "   {label}: line {line} ops: msm={} msm_batch={} ntt={} ntt_batch={}",
-                self.ops[line][0], self.ops[line][1], self.ops[line][2], self.ops[line][3]
+                "   {label}: line {line} ops: msm={} ntt={}",
+                self.ops[line][0], self.ops[line][1]
             );
         }
     }

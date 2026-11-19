@@ -328,8 +328,7 @@ fn strict_mode(strict: &str) -> bool {
 
 /// This process's GPU work as the backend counts it (process-wide counters, one arm
 /// per process): per proof line (0: midnight-proofs 0.7.x, 1: 0.8.x) the GPU MSMs and
-/// NTTs launched (single and batch launches together), and the GPU->CPU failure
-/// fallbacks.
+/// NTTs launched, and the GPU->CPU failure fallbacks.
 #[cfg(feature = "gpu")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct GpuWork {
@@ -344,15 +343,8 @@ impl GpuWork {
             config::gpu_fallback_count,
             diag::{OpKind, gpu_op_count},
         };
-        let launches =
-            |line, kinds: [OpKind; 2]| -> u64 { kinds.map(|kind| gpu_op_count(line, kind)).iter().sum() };
         GpuWork {
-            msm_ntt: [0, 1].map(|line| {
-                [
-                    launches(line, [OpKind::Msm, OpKind::MsmBatch]),
-                    launches(line, [OpKind::Ntt, OpKind::NttBatch]),
-                ]
-            }),
+            msm_ntt: [0, 1].map(|line| [gpu_op_count(line, OpKind::Msm), gpu_op_count(line, OpKind::Ntt)]),
             fallbacks: gpu_fallback_count(),
         }
     }

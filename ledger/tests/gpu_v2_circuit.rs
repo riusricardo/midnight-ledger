@@ -87,18 +87,13 @@ fn line_work() -> [u64; 3] {
         diag::{OpKind, gpu_op_count},
         line_id,
     };
-    let count = |kinds: [OpKind; 2]| -> u64 { kinds.iter().map(|&kind| gpu_op_count(line_id(), kind)).sum() };
-    [
-        count([OpKind::Msm, OpKind::MsmBatch]),
-        count([OpKind::Ntt, OpKind::NttBatch]),
-        gpu_fallback_count(),
-    ]
+    [gpu_op_count(line_id(), OpKind::Msm), gpu_op_count(line_id(), OpKind::Ntt), gpu_fallback_count()]
 }
 
 #[tokio::test]
 async fn v2_circuit_proves_the_cpu_bytes() {
     #[cfg(feature = "gpu")]
-    let device = std::env::var("MIDNIGHT_DEVICE").unwrap_or_else(|_| "auto".into());
+    let device = midnight_proofs::gpu_accel::backend::config::device_type();
     #[cfg(feature = "gpu")]
     eprintln!("[v2-circuit] device={device}: {:?}", zkir_v2::init_gpu_backend());
 
@@ -130,7 +125,7 @@ async fn v2_circuit_proves_the_cpu_bytes() {
     assert_eq!(digest.as_str(), PROOF_BLAKE2B, "the proof bytes differ from the CPU's");
 
     #[cfg(feature = "gpu")]
-    if device == "cpu" {
+    if device == midnight_proofs::gpu_accel::backend::config::DeviceType::Cpu {
         use midnight_proofs::gpu_accel::backend::diag::backend_load_count;
         assert_eq!(backend_load_count(), 0, "CPU mode loaded the GPU backend");
     } else {
@@ -138,7 +133,8 @@ async fn v2_circuit_proves_the_cpu_bytes() {
         let [msm, ntt, fallbacks] = [0, 1, 2].map(|i| after[i] - before[i]);
         assert_eq!(fallbacks, 0, "a GPU operation fell back to the CPU");
         // Auto routes by the crossovers this machine measured; forced GPU mode always.
-        let routed = device == "gpu" || 1usize << ir.k() >= min_gpu_size().max(min_ntt_gpu_size());
+        use midnight_proofs::gpu_accel::backend::config::DeviceType;
+        let routed = device == DeviceType::Gpu || 1usize << ir.k() >= min_gpu_size().max(min_ntt_gpu_size());
         if routed {
             assert!(msm > 0 && ntt > 0, "the 0.8.x line launched {msm} GPU MSMs and {ntt} GPU NTTs");
         } else {

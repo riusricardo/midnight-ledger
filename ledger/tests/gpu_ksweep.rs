@@ -149,8 +149,8 @@ macro_rules! ksweep_impl {
         }
 
         /// Domain-filling circuit: 8 advice columns filled over half the domain, so
-        /// polynomial sizes equal the domain size and the GPU NTT (>=2^12) / MSM (>=2^13)
-        /// paths are exercised. (Ported from the fork's gpu_correctness e2e harness so the
+        /// polynomial sizes equal the domain size and, at sizes the routing sends to the
+        /// GPU, the GPU NTT and MSM paths are exercised. (Ported from the fork's gpu_correctness e2e harness so the
         /// ledger-level numbers are directly comparable to the fork-level ones.)
         /// Its gates are not identically zero and a copy constraint ties a4 to a0, so the
         /// quotient, the extended-domain NTTs and the quotient's evaluation must be right
