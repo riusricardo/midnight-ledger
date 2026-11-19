@@ -392,8 +392,7 @@ fn check_gpu_work(device: &str, before: GpuWork) {
 /// each operation under Auto.
 #[cfg(feature = "gpu")]
 fn gpu_backend_info() -> String {
-    use midnight_proofs_v1::gpu_accel::GpuAccelerator;
-    midnight_proofs_v1::gpu_accel::global_accelerator().backend_info()
+    midnight_proofs_v1::gpu_accel::backend_info()
 }
 
 /// The sealed tx's Dust balance after its own fee: what it pays minus what it

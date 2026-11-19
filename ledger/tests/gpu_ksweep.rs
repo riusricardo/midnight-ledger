@@ -397,8 +397,7 @@ mod v1 {
     fn gpu_backend_info() -> Option<String> {
         #[cfg(feature = "gpu")]
         {
-            use proofs::gpu_accel::GpuAccelerator;
-            Some(proofs::gpu_accel::global_accelerator().backend_info())
+            Some(proofs::gpu_accel::backend_info())
         }
         #[cfg(not(feature = "gpu"))]
         None
@@ -458,8 +457,7 @@ mod v2 {
     fn gpu_backend_info() -> Option<String> {
         #[cfg(feature = "gpu")]
         {
-            use proofs::gpu_accel::GpuAccelerator;
-            Some(proofs::gpu_accel::global_accelerator().backend_info())
+            Some(proofs::gpu_accel::backend_info())
         }
         #[cfg(not(feature = "gpu"))]
         None

@@ -369,13 +369,11 @@ fn cpu_device_selected() -> bool {
 pub fn gpu_backend_info() -> Option<String> {
     #[cfg(feature = "gpu-v1")]
     {
-        use midnight_proofs_v1::gpu_accel::GpuAccelerator;
-        Some(midnight_proofs_v1::gpu_accel::global_accelerator().backend_info())
+        Some(midnight_proofs_v1::gpu_accel::backend_info())
     }
     #[cfg(all(feature = "gpu-v2", not(feature = "gpu-v1")))]
     {
-        use midnight_proofs::gpu_accel::GpuAccelerator;
-        Some(midnight_proofs::gpu_accel::global_accelerator().backend_info())
+        Some(midnight_proofs::gpu_accel::backend_info())
     }
     #[cfg(not(any(feature = "gpu-v1", feature = "gpu-v2")))]
     {
