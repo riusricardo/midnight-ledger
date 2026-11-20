@@ -389,6 +389,32 @@ mod prove_tx_endpoint {
         stop_server(server).await;
     }
 
+    /// Zswap proofs alone (no contract call), so this needs no compiled contract:
+    /// the proved transaction comes back.
+    #[tokio::test]
+    async fn proves_a_zswap_transaction() {
+        let server = start_server(DEFAULT_NUM_WORKERS, DEFAULT_JOB_LIMIT);
+        let body = serialize_zswap_body().await;
+
+        let response = build_client(LONG_REQUEST_TIMEOUT_SECS)
+            .post(format!("{}/prove-tx", server.base_url()))
+            .body(body)
+            .send()
+            .await
+            .expect("Request failed");
+
+        assert_eq!(response.status(), 200);
+
+        let bytes = response
+            .bytes()
+            .await
+            .expect("Failed to get response bytes");
+        let _proved: Transaction<Signature, ProofMarker, PedersenRandomness, InMemoryDB> =
+            tagged_deserialize(&bytes[..]).expect("Failed to deserialize the proved transaction");
+
+        stop_server(server).await;
+    }
+
     #[tokio::test]
     async fn rejects_repeated_body() {
         let server = start_server(DEFAULT_NUM_WORKERS, DEFAULT_JOB_LIMIT);
@@ -884,6 +910,90 @@ mod prove_endpoint {
 
         let _proof: ledger::structure::ProofVersioned =
             tagged_deserialize(&bytes[..]).expect("Failed to deserialize proof");
+
+        stop_server(server).await;
+    }
+
+    /// A zkir-v3 circuit (`ir-source[v3-generic]`) proved through `/prove` with
+    /// its key material in the request: the proof verifies under its verifier
+    /// key for the binding input it was made for, and not for another.
+    #[tokio::test]
+    async fn proves_a_zkir_v3_circuit() {
+        use ledger::structure::{ProofPreimageVersioned, ProofVersioned};
+        use ledger::test_utilities::PUBLIC_PARAMS;
+        use std::borrow::Cow;
+        use std::sync::Arc;
+        use transient_crypto::curve::Fr;
+        use transient_crypto::proofs::{KeyLocation, PARAMS_VERIFIER, ProofPreimage, Zkir};
+
+        let server = start_server(DEFAULT_NUM_WORKERS, DEFAULT_JOB_LIMIT);
+
+        let ir = zkir_v3::IrSource::load(
+            r#"{
+                "version": { "major": 3, "minor": 0 },
+                "inputs": [{ "name": "%v_0", "type": "Scalar<BLS12-381>" }],
+                "outputs": [],
+                "do_communications_commitment": false,
+                "instructions": [{ "op": "assert", "cond": "%v_0" }]
+            }"#
+            .as_bytes(),
+        )
+        .expect("load the zkir-v3 program");
+        let (prover_key, verifier_key) = ir.keygen(&*PUBLIC_PARAMS).await.expect("keygen");
+        let mut key_material = ProvingKeyMaterial {
+            prover_key: Vec::new(),
+            verifier_key: Vec::new(),
+            ir_source: Vec::new(),
+        };
+        tagged_serialize(&prover_key, &mut key_material.prover_key).expect("prover key");
+        tagged_serialize(&verifier_key, &mut key_material.verifier_key).expect("verifier key");
+        tagged_serialize(&ir, &mut key_material.ir_source).expect("IR");
+
+        let preimage = ProofPreimage {
+            binding_input: 42.into(),
+            communications_commitment: None,
+            inputs: vec![1.into()],
+            private_transcript: vec![],
+            public_transcript_inputs: vec![],
+            public_transcript_outputs: vec![],
+            key_location: KeyLocation(Cow::Borrowed("zkir-v3-test")),
+        };
+        let mut body = Vec::new();
+        tagged_serialize(
+            &(
+                ProofPreimageVersioned::V2(Arc::new(preimage)),
+                Some(key_material),
+                None::<Fr>,
+            ),
+            &mut body,
+        )
+        .expect("Failed to serialize prove request");
+
+        let response = build_client(LONG_REQUEST_TIMEOUT_SECS)
+            .post(format!("{}/prove", server.base_url()))
+            .body(body)
+            .send()
+            .await
+            .expect("Request failed");
+        assert_eq!(response.status(), 200);
+
+        let bytes = response
+            .bytes()
+            .await
+            .expect("Failed to get response bytes");
+        let ProofVersioned::V2(proof) =
+            tagged_deserialize(&bytes[..]).expect("Failed to deserialize proof")
+        else {
+            panic!("the endpoint answers a V2 proof");
+        };
+        verifier_key
+            .verify(&PARAMS_VERIFIER, &proof, [42.into()].into_iter())
+            .expect("the proof verifies");
+        assert!(
+            verifier_key
+                .verify(&PARAMS_VERIFIER, &proof, [43.into()].into_iter())
+                .is_err()
+        );
 
         stop_server(server).await;
     }

@@ -39,11 +39,16 @@ static BUDGET_BYTES: OnceLock<u64> = OnceLock::new();
 /// it at start-up, before serving).
 pub fn set_budget_mib(mib: u64) {
     // Ignoring the result keeps the first setting, as documented.
-    let _ = BUDGET_BYTES.set(mib.saturating_mul(1 << 20));
+    let _ = BUDGET_BYTES.set(bytes_of_mib(mib));
 }
 
 fn budget_bytes() -> u64 {
-    *BUDGET_BYTES.get_or_init(|| DEFAULT_PARAMS_CACHE_MIB << 20)
+    *BUDGET_BYTES.get_or_init(|| bytes_of_mib(DEFAULT_PARAMS_CACHE_MIB))
+}
+
+/// `mib` MiB in bytes, saturating.
+const fn bytes_of_mib(mib: u64) -> u64 {
+    mib.saturating_mul(1 << 20)
 }
 
 /// [`PUBLIC_PARAMS`] behind the cache: the proving endpoints' parameters in GPU
@@ -129,8 +134,54 @@ impl<V: Clone> Lru<V> {
 
 #[cfg(test)]
 mod tests {
-    use super::Lru;
+    use super::{Lru, budget_bytes, bytes_of_mib, params_bytes, set_budget_mib};
+    use crate::endpoints::PUBLIC_PARAMS;
     use std::sync::Arc;
+    use transient_crypto::proofs::ParamsProverProvider;
+
+    #[test]
+    fn a_budget_in_mib_is_counted_in_bytes() {
+        assert_eq!(bytes_of_mib(0), 0);
+        assert_eq!(bytes_of_mib(1), 1_048_576);
+        assert_eq!(bytes_of_mib(256), 268_435_456);
+        assert_eq!(bytes_of_mib(u64::MAX), u64::MAX);
+    }
+
+    /// The only test that reads or sets the process-wide budget.
+    #[test]
+    fn the_first_budget_setting_is_kept() {
+        set_budget_mib(64);
+        assert_eq!(budget_bytes(), 64 << 20);
+        set_budget_mib(128);
+        assert_eq!(budget_bytes(), 64 << 20);
+    }
+
+    /// Both bases of a parameter set read from the data provider (the files the
+    /// integration tests read): 2^k points each.
+    #[tokio::test]
+    async fn a_parameter_set_counts_both_bases() {
+        let k = 10;
+        let params = PUBLIC_PARAMS
+            .get_params(k)
+            .await
+            .expect("params for k = 10");
+        let point = std::mem::size_of_val(&params.as_ref().g_lagrange()[0]) as u64;
+        assert_eq!(params_bytes(&params), 2 * (1u64 << k) * point);
+    }
+
+    #[test]
+    fn a_value_of_exactly_the_budget_is_cached() {
+        let mut lru = Lru::new();
+        lru.insert(13, Arc::new(13), 30, 100);
+        let value = Arc::new(14);
+        assert!(Arc::ptr_eq(
+            &lru.insert(14, value.clone(), 100, 100),
+            &value
+        ));
+        assert!(Arc::ptr_eq(&lru.get(14).expect("cached"), &value));
+        assert_eq!(keys(&lru), [14]);
+        assert_eq!(lru.used, 100);
+    }
 
     fn keys(lru: &Lru<Arc<u8>>) -> Vec<u8> {
         lru.entries.iter().map(|(k, ..)| *k).collect()
