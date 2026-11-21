@@ -3387,7 +3387,7 @@ dependencies = [
 
 [[package]]
 name = "midnight-ledger-wasm-v9"
-version = "1.0.2-rc.0"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "getrandom 0.2.17",
@@ -3449,7 +3449,7 @@ dependencies = [
 
 [[package]]
 name = "midnight-onchain-runtime-wasm"
-version = "4.0.2-rc.0"
+version = "4.0.2"
 dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",
@@ -3516,7 +3516,7 @@ dependencies = [
 
 [[package]]
 name = "midnight-proof-server"
-version = "9.0.2-rc.1"
+version = "9.0.2"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -3950,64 +3950,6 @@ dependencies = [
  "sha2 0.11.0",
  "sha3",
  "tracing",
-]
-
-[[package]]
-name = "midnight-zkir-v3"
-version = "3.0.0"
-dependencies = [
- "actix-rt",
- "anyhow",
- "clap",
- "console 0.16.3",
- "const-hex",
- "env_logger",
- "futures-executor",
- "group 0.13.0",
- "hex",
- "indicatif",
- "log",
- "midnight-base-crypto",
- "midnight-circuits 7.3.0",
- "midnight-curves 0.3.1",
- "midnight-proofs 0.8.2",
- "midnight-serialize",
- "midnight-transient-crypto 3.1.0",
- "midnight-zk-stdlib 2.4.0",
- "midnight-zkir-v3",
- "num-bigint",
- "num-traits",
- "pastey",
- "proptest",
- "proptest-derive",
- "rand 0.8.6",
- "rand_chacha 0.3.1",
- "serde",
- "serde_bytes",
- "serde_json",
- "serde_repr",
- "sha2 0.11.0",
- "sha3",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "midnight-zkir-v3-wasm"
-version = "3.0.0-rc.2"
-dependencies = [
- "getrandom 0.2.17",
- "getrandom 0.3.4",
- "hex",
- "js-sys",
- "midnight-serialize",
- "midnight-transient-crypto 3.1.0",
- "midnight-zkir-v3",
- "rand 0.8.6",
- "serde_json",
- "wasm-bindgen",
- "wasm-bindgen-futures",
 ]
 
 [[package]]
@@ -4819,9 +4761,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-udp"
-version = "0.5.14"
+version = "0.5.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "addec6a0dcad8a8d96a771f815f0eaf55f9d1805756410b39f5fa81332574cbd"
+checksum = "af66907df18639dcf4db56ca65490cabc4b27a97dbadd96f2926cca73298f016"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -5224,9 +5166,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "1.1.4"
+version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
+checksum = "e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa"
 dependencies = [
  "bitflags 2.11.1",
  "errno",
@@ -6058,7 +6000,7 @@ dependencies = [
  "fastrand",
  "getrandom 0.4.2",
  "once_cell",
- "rustix 1.1.4",
+ "rustix 1.1.6",
  "windows-sys 0.61.2",
 ]
 
