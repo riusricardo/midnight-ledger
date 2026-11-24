@@ -1,0 +1,7 @@
+# Build context of gpu.Dockerfile only (BuildKit reads <Dockerfile>.dockerignore beside it).
+.git
+.direnv
+**/target
+result
+result-*
+**/node_modules
