@@ -22,6 +22,8 @@ ARG TARGETARCH
 ARG RUST_VERSION=1.99.1
 # For arm64: the aarch64 GNU toolchain and CUDA's SBSA cross libraries (NVIDIA's cross-linux-sbsa
 # repository); CMake looks for an aarch64 CUDA target in targets/aarch64-linux, the SBSA one is sbsa-linux.
+# ICICLE's CMake (cmake/setup.cmake) takes `clang`/`clang++` from PATH whenever they exist, over the
+# compilers Cargo passes, so the arm64 build puts wrappers first on PATH that target aarch64.
 RUN set -eu; \
     pkgs="build-essential clang libclang-dev cmake git pkg-config perl ca-certificates curl"; \
     case "$TARGETARCH" in \
@@ -29,7 +31,11 @@ RUN set -eu; \
       arm64) echo 'deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/cross-linux-sbsa/ /' \
                > /etc/apt/sources.list.d/cuda-cross-sbsa.list; \
              pkgs="$pkgs gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross cuda-cross-sbsa-$(echo "$CUDA_VERSION" | cut -d. -f1,2 | tr . -)"; \
-             mkdir -p /usr/local/cuda/targets && ln -s sbsa-linux /usr/local/cuda/targets/aarch64-linux ;; \
+             mkdir -p /usr/local/cuda/targets && ln -s sbsa-linux /usr/local/cuda/targets/aarch64-linux; \
+             mkdir -p /opt/aarch64-clang; \
+             printf '#!/bin/sh\nexec /usr/bin/clang --target=aarch64-linux-gnu "$@"\n' > /opt/aarch64-clang/clang; \
+             printf '#!/bin/sh\nexec /usr/bin/clang++ --target=aarch64-linux-gnu "$@"\n' > /opt/aarch64-clang/clang++; \
+             chmod +x /opt/aarch64-clang/clang /opt/aarch64-clang/clang++ ;; \
       *) echo "unsupported TARGETARCH $TARGETARCH" >&2; exit 1 ;; \
     esac; \
     apt-get update; \
@@ -47,6 +53,7 @@ RUN set -eu; { \
       echo '         export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc'; \
       echo '         export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++'; \
       echo '         export AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar PKG_CONFIG_ALLOW_CROSS=1'; \
+      echo '         export PATH=/opt/aarch64-clang:$PATH'; \
       echo '         export BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu=--sysroot=/usr/aarch64-linux-gnu ;;'; \
       echo 'esac'; \
     } > /opt/target-env.sh; \
